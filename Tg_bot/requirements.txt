@@ -1,0 +1,14 @@
+aiogram==3.10.0
+sqlalchemy==2.0.31
+asyncpg==0.29.0
+python-dotenv==1.0.1
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+thefuzz==0.22.1
+python-levenshtein==0.25.1
+selenium==4.22.0
+webdriver-manager==4.0.1
+certifi==2024.7.4
+typing-extensions==4.12.2
+urllib3==2.2.2
