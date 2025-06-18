@@ -1,3 +1,5 @@
+# app/keyboards.py
+
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
@@ -14,12 +16,14 @@ def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
     )
     return builder.as_markup(resize_keyboard=True)
 
+
 def get_profile_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=lexicon.get('profile_button_location'), callback_data="change_location")
     builder.button(text=lexicon.get('profile_button_subs'), callback_data="open_subscriptions")
     builder.adjust(1)
     return builder.as_markup()
+
 
 def get_country_selection_keyboard(all_countries: list, lexicon, is_multiselect: bool = False,
                                    home_country: str | None = None,
@@ -45,6 +49,7 @@ def get_country_selection_keyboard(all_countries: list, lexicon, is_multiselect:
 
     return builder.as_markup()
 
+
 def get_city_selection_keyboard(top_cities: list, lexicon, selected_cities: list = None) -> InlineKeyboardMarkup:
     if selected_cities is None:
         selected_cities = []
@@ -63,6 +68,7 @@ def get_city_selection_keyboard(top_cities: list, lexicon, selected_cities: list
     )
     return builder.as_markup()
 
+
 def get_found_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for city in found_cities:
@@ -71,12 +77,13 @@ def get_found_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboardMark
     builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data="back_to_city_selection"))
     return builder.as_markup()
 
-# --- НОВАЯ КЛАВИАТУРА ---
+
 def get_back_to_city_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
     """Клавиатура с одной кнопкой 'Назад'."""
     builder = InlineKeyboardBuilder()
     builder.button(text=lexicon.get('back_button'), callback_data="back_to_city_selection")
     return builder.as_markup()
+
 
 def get_categories_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -89,6 +96,7 @@ def get_categories_keyboard() -> InlineKeyboardMarkup:
     builder.adjust(2)
     return builder.as_markup()
 
+
 def get_cities_keyboard(cities: list, category: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for city in cities:
@@ -96,14 +104,20 @@ def get_cities_keyboard(cities: list, category: str) -> InlineKeyboardMarkup:
     builder.adjust(2)
     return builder.as_markup()
 
+
 def manage_subscriptions_keyboard(items: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if items:
         for item in items:
             builder.button(text=f"❌ {item}", callback_data=f"unsubscribe:{item}")
         builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="➕ Добавить подписку", callback_data="add_subscription"))
+
+    builder.row(
+        InlineKeyboardButton(text="➕ Добавить вручную", callback_data="add_subscription"),
+        InlineKeyboardButton(text="📥 Импорт из плейлиста", callback_data="import_playlist")
+    )
     return builder.as_markup()
+
 
 def found_artists_keyboard(artists: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -111,4 +125,45 @@ def found_artists_keyboard(artists: list) -> InlineKeyboardMarkup:
         builder.button(text=f"✅ {artist}", callback_data=f"subscribe_to_artist:{artist}")
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text="Отмена", callback_data="cancel_subscription"))
+    return builder.as_markup()
+
+
+def get_paginated_artists_keyboard(
+        all_artists: list,
+        selected_artists: set,
+        page: int = 0
+) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора артистов с пагинацией."""
+    builder = InlineKeyboardBuilder()
+    PAGE_SIZE = 5
+    start = page * PAGE_SIZE
+    end = start + PAGE_SIZE
+
+    artists_on_page = all_artists[start:end]
+
+    for artist in artists_on_page:
+        text = f"✅ {artist}" if artist in selected_artists else f"⬜️ {artist}"
+        builder.button(text=text, callback_data=f"toggle_artist_subscribe:{artist}")
+
+    builder.adjust(1)
+
+    total_pages = (len(all_artists) + PAGE_SIZE - 1) // PAGE_SIZE
+    if total_pages > 1:
+        pagination_buttons = []
+        if page > 0:
+            pagination_buttons.append(
+                InlineKeyboardButton(text="⬅️", callback_data=f"paginate_artists:{page - 1}")
+            )
+
+        pagination_buttons.append(
+            InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ignore")
+        )
+
+        if page < total_pages - 1:
+            pagination_buttons.append(
+                InlineKeyboardButton(text="➡️", callback_data=f"paginate_artists:{page + 1}")
+            )
+        builder.row(*pagination_buttons)
+
+    builder.row(InlineKeyboardButton(text="✅ Готово", callback_data="finish_artist_selection"))
     return builder.as_markup()

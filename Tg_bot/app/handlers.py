@@ -1,3 +1,5 @@
+# app/handlers.py
+
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -10,6 +12,7 @@ from .database import requests as db
 from .database.models import async_session
 from . import keyboards as kb
 from .lexicon import Lexicon, LEXICON_COMMANDS_RU, LEXICON_COMMANDS_EN
+from .playlist_parser import parse_playlist_url
 
 router = Router()
 
@@ -27,6 +30,8 @@ class SearchState(StatesGroup):
 
 class SubscriptionFlow(StatesGroup):
     waiting_for_artist_name = State()
+    waiting_for_playlist_url = State()
+    selecting_from_playlist = State()
 
 
 async def set_main_menu(bot: Bot, lang: str):
@@ -35,7 +40,6 @@ async def set_main_menu(bot: Bot, lang: str):
     await bot.set_my_commands(main_menu_commands)
 
 
-# --- Форматирование ответов ---
 async def format_grouped_events_for_response(events: list) -> str:
     if not events: return "По вашему запросу ничего не найдено."
     response_parts = []
@@ -86,13 +90,10 @@ async def format_events_for_response(events: list) -> str:
     return separator.join(response_parts)
 
 
-# --- Вспомогательные функции ---
 async def show_city_selection_screen(message: Message, state: FSMContext, lexicon: Lexicon):
     data = await state.get_data()
     country_name = data.get("selected_countries")[0]
     top_cities = await db.get_top_cities_for_country(country_name)
-
-    # Сохраняем ID этого сообщения, чтобы потом его обновлять
     msg = await message.edit_text(
         lexicon.get('choose_local_cities'),
         reply_markup=kb.get_city_selection_keyboard(top_cities, lexicon, data.get("selected_cities", []))
@@ -103,23 +104,19 @@ async def show_city_selection_screen(message: Message, state: FSMContext, lexico
 async def start_onboarding_process(message: Message | CallbackQuery, state: FSMContext, lexicon: Lexicon):
     await state.clear()
     await state.set_state(Onboarding.choosing_home_country)
-    all_countries = await db.get_countries()
+    # --- ИЗМЕНЕНИЕ 1: Получаем ограниченный список стран для первого экрана ---
+    all_countries = await db.get_countries(home_country_selection=True)
 
     text = lexicon.get('settings_intro')
     if isinstance(message, Message):
         text = lexicon.get('welcome').format(first_name=hbold(message.from_user.first_name))
-
     action = message.answer if isinstance(message, Message) else message.message.edit_text
-    await action(
-        text,
-        reply_markup=kb.get_country_selection_keyboard(all_countries, lexicon),
-        parse_mode=ParseMode.HTML
-    )
+    await action(text, reply_markup=kb.get_country_selection_keyboard(all_countries, lexicon),
+                 parse_mode=ParseMode.HTML)
     if isinstance(message, CallbackQuery):
         await message.answer()
 
 
-# --- Основные обработчики ---
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     user_lang = message.from_user.language_code
@@ -142,7 +139,10 @@ async def cq_select_home_country(callback: CallbackQuery, state: FSMContext):
     lexicon = Lexicon(callback.from_user.language_code)
     await state.update_data(home_country=home_country, selected_countries=[home_country])
     await state.set_state(Onboarding.choosing_travel_countries)
+
+    # --- ИЗМЕНЕНИЕ 2: Получаем ПОЛНЫЙ список стран для второго экрана ---
     all_countries = await db.get_countries()
+
     await callback.message.edit_text(
         lexicon.get('choose_travel_countries').format(home_country=hbold(home_country)),
         reply_markup=kb.get_country_selection_keyboard(
@@ -164,7 +164,10 @@ async def cq_toggle_travel_country(callback: CallbackQuery, state: FSMContext):
     else:
         selected.append(country_to_toggle)
     await state.update_data(selected_countries=selected)
+
+    # --- ИЗМЕНЕНИЕ 3: Получаем ПОЛНЫЙ список стран для обновления клавиатуры ---
     all_countries = await db.get_countries()
+
     lexicon = Lexicon(callback.from_user.language_code)
     await callback.message.edit_reply_markup(
         reply_markup=kb.get_country_selection_keyboard(
@@ -202,8 +205,6 @@ async def cq_ignore(callback: CallbackQuery):
     await callback.answer()
 
 
-# --- ОБНОВЛЕННАЯ ЛОГИКА ВЫБОРА И ПОИСКА ГОРОДОВ ---
-
 @router.callback_query(Onboarding.choosing_local_cities, F.data.startswith("toggle_city:"))
 async def cq_toggle_local_city(callback: CallbackQuery, state: FSMContext):
     city_to_toggle = callback.data.split(":")[1]
@@ -214,7 +215,6 @@ async def cq_toggle_local_city(callback: CallbackQuery, state: FSMContext):
     else:
         selected.append(city_to_toggle)
     await state.update_data(selected_cities=selected)
-
     lexicon = Lexicon(callback.from_user.language_code)
     await show_city_selection_screen(callback.message, state, lexicon)
     await callback.answer()
@@ -234,14 +234,8 @@ async def process_city_search(message: Message, state: FSMContext):
     country_name = data.get("selected_countries")[0]
     lexicon = Lexicon(message.from_user.language_code)
     best_matches = await db.find_cities_fuzzy(country_name, message.text)
-
-    # ИСПРАВЛЕНИЕ: Устанавливаем правильное состояние ПЕРЕД отправкой клавиатуры
     await state.set_state(Onboarding.choosing_local_cities)
-
-    # Удаляем сообщение пользователя с названием города
     await message.delete()
-
-    # Редактируем сообщение "Введите название...", показывая результаты
     city_selection_message_id = data.get('city_selection_message_id')
     if not best_matches:
         await message.bot.edit_message_text(
@@ -265,8 +259,6 @@ async def cq_back_to_city_selection(callback: CallbackQuery, state: FSMContext):
     await show_city_selection_screen(callback.message, state, lexicon)
     await callback.answer()
 
-
-# --- КОНЕЦ ОБНОВЛЕННОЙ ЛОГИКИ ---
 
 @router.callback_query(Onboarding.choosing_local_cities, F.data == "finish_city_selection")
 async def cq_finish_city_selection(callback: CallbackQuery, state: FSMContext):
@@ -316,22 +308,25 @@ async def menu_afisha(message: Message):
 @router.message(F.text.in_(['🔎 Поиск', '🔎 Search']))
 async def menu_search(message: Message, state: FSMContext):
     await state.set_state(SearchState.waiting_for_query)
-    await message.answer("Введите название события или артиста для поиска:", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Введите название события или артиста для поиска:")
 
 
-async def show_subscriptions(message: Message | CallbackQuery):
+async def show_subscriptions(message: Message | CallbackQuery, force_new_message: bool = False):
     user_id = message.from_user.id
     subscriptions = await db.get_user_subscriptions(user_id)
-    text = "У тебя пока нет подписок. Добавь первую!" if not subscriptions else "Твои подписки:"
+    if not subscriptions:
+        text = "У тебя пока нет подписок.\n\nТы можешь добавить артистов вручную или импортировать их из своего плейлиста."
+    else:
+        text = "Твои подписки:\nНажми на подписку, чтобы удалить ее."
     markup = kb.manage_subscriptions_keyboard(subscriptions)
-
-    if isinstance(message, CallbackQuery):
+    if isinstance(message, CallbackQuery) and not force_new_message:
         try:
             await message.message.edit_text(text, reply_markup=markup)
         except Exception:
             await message.answer()
     else:
-        await message.answer(text, reply_markup=markup)
+        chat_id = message.chat.id if isinstance(message, Message) else message.message.chat.id
+        await message.bot.send_message(chat_id, text, reply_markup=markup)
 
 
 @router.message(F.text.in_(['⭐ Мои подписки', '⭐ My Subscriptions', '⭐ Мае падпіскі']))
@@ -348,10 +343,127 @@ async def cq_unsubscribe_item(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "add_subscription")
-async def cq_add_subscription(callback: CallbackQuery, state: FSMContext):
+async def cq_add_subscription_manual(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SubscriptionFlow.waiting_for_artist_name)
-    await callback.message.edit_text("Введите имя артиста или название группы:")
+    await callback.message.edit_text("Введите имя артиста или название группы, чтобы добавить подписку вручную:")
     await callback.answer()
+
+
+@router.callback_query(F.data == "import_playlist")
+async def cq_import_playlist(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SubscriptionFlow.waiting_for_playlist_url)
+    await callback.message.edit_text(
+        "Отлично! Отправь мне ссылку на публичный плейлист из одного из сервисов:\n\n"
+        "• YouTube Music\n"
+        "• Spotify\n"
+        "• Яндекс.Музыка\n"
+        "• VK Музыка (Boom)\n\n"
+        "Я постараюсь извлечь оттуда всех исполнителей."
+    )
+    await callback.answer()
+
+
+@router.message(SubscriptionFlow.waiting_for_playlist_url, F.text)
+async def process_playlist_url(message: Message, state: FSMContext):
+    if not message.text.startswith('http'):
+        await message.reply("Это не похоже на ссылку. Пожалуйста, попробуй еще раз или вернись в меню подписок.")
+        await show_subscriptions(message)
+        return
+
+    msg = await message.reply("Принял ссылку. Начинаю обработку, это может занять некоторое время...")
+
+    master_artists = await db.get_all_master_artists()
+    found_artists_lower = await parse_playlist_url(message.text, master_artists=master_artists)
+
+    if found_artists_lower is None:
+        await msg.edit_text(
+            "Не удалось распознать сервис или плейлист по этой ссылке. Убедись, что плейлист публичный и ссылка верна.")
+        await state.clear()
+        return
+
+    if not found_artists_lower:
+        await msg.edit_text(
+            "Не смог найти артистов из твоего списка в этом плейлисте. Возможно, он пуст или нет совпадений.")
+        await state.clear()
+        return
+
+    correctly_cased_artists = await db.get_artists_by_lowercase_names(found_artists_lower)
+
+    if "music.youtube.com" in message.text.lower():
+        await state.set_state(SubscriptionFlow.selecting_from_playlist)
+        sorted_artists = sorted(list(set(correctly_cased_artists)))
+        await state.update_data(found_artists=sorted_artists, selected_artists=set())
+        await msg.edit_text(
+            "Я нашел этих артистов в плейлисте. Выбери, на кого хочешь подписаться:",
+            reply_markup=kb.get_paginated_artists_keyboard(sorted_artists, set())
+        )
+    else:
+        await state.clear()
+        added_count = 0
+        for artist_name in set(correctly_cased_artists):
+            await db.add_subscription(message.from_user.id, artist_name, 'music')
+        added_count += 1
+        await msg.delete()
+        await message.answer(f"✅ Готово! Успешно добавлено {added_count} новых подписок из плейлиста.")
+        await show_subscriptions(message, force_new_message=True)
+
+
+@router.callback_query(SubscriptionFlow.selecting_from_playlist, F.data.startswith("paginate_artists:"))
+async def cq_paginate_artists(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    found = data.get("found_artists", [])
+    selected = data.get("selected_artists", set())
+
+    await callback.message.edit_reply_markup(
+        reply_markup=kb.get_paginated_artists_keyboard(found, selected, page)
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionFlow.selecting_from_playlist, F.data.startswith("toggle_artist_subscribe:"))
+async def cq_toggle_artist_subscribe(callback: CallbackQuery, state: FSMContext):
+    artist_name = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    found = data.get("found_artists", [])
+    selected = data.get("selected_artists", set())
+
+    if artist_name in selected:
+        selected.remove(artist_name)
+    else:
+        selected.add(artist_name)
+
+    await state.update_data(selected_artists=selected)
+
+    current_page = 0
+    if found:
+        try:
+            current_page = found.index(artist_name) // 5
+        except ValueError:
+            pass
+
+    await callback.message.edit_reply_markup(
+        reply_markup=kb.get_paginated_artists_keyboard(found, selected, current_page)
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionFlow.selecting_from_playlist, F.data == "finish_artist_selection")
+async def cq_finish_artist_selection(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected_artists = data.get("selected_artists", set())
+
+    if not selected_artists:
+        await callback.answer("Ты никого не выбрал.", show_alert=True)
+        return
+
+    for artist in selected_artists:
+        await db.add_subscription(callback.from_user.id, artist, 'music')
+
+    await state.clear()
+    await callback.message.delete()
+    await callback.message.answer(f"✅ Готово! Успешно добавлено {len(selected_artists)} новых подписок.")
+    await show_subscriptions(callback, force_new_message=True)
 
 
 @router.message(SubscriptionFlow.waiting_for_artist_name, F.text)
@@ -400,7 +512,10 @@ async def cq_category(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("city:"))
 async def cq_city(callback: CallbackQuery):
     _, city, category = callback.data.split(":")
-    await callback.message.edit_text(f"Загружаю события для города {hbold(city)}...")
+    await callback.message.edit_text(
+        f"Загружаю события для города {hbold(city)}...",
+        parse_mode=ParseMode.HTML
+    )
     events = await db.get_grouped_events_by_city_and_category(city, category)
     response_text = await format_grouped_events_for_response(events)
     await callback.message.answer(response_text, disable_web_page_preview=True, parse_mode=ParseMode.HTML)
@@ -412,8 +527,13 @@ async def search_query_handler(message: Message, state: FSMContext):
     await state.clear()
     user_regions = await db.get_user_regions(message.from_user.id)
     lexicon = Lexicon(message.from_user.language_code)
-    await message.answer(f"Ищу события по запросу: {hbold(message.text)}...", parse_mode=ParseMode.HTML,
-                         reply_markup=kb.get_main_menu_keyboard(lexicon))
+
+    await message.answer(
+        f"Ищу события по запросу: {hbold(message.text)}...",
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb.get_main_menu_keyboard(lexicon)
+    )
+
     found_events = await db.find_events_fuzzy(message.text, user_regions)
     response_text = await format_events_for_response(found_events)
     await message.answer(response_text, disable_web_page_preview=True, parse_mode=ParseMode.HTML)

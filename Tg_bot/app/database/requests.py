@@ -1,3 +1,5 @@
+# app/database/requests.py
+
 from sqlalchemy import select, delete, and_, or_, func, distinct, union
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
@@ -48,10 +50,8 @@ async def get_user_subscriptions(user_id: int) -> list:
 
 async def add_subscription(user_id: int, item_name: str, category: str):
     async with async_session() as session:
-        # Сначала убедимся, что пользователь существует
         user_result = await session.execute(select(User).where(User.user_id == user_id))
         if not user_result.scalar_one_or_none():
-            # В реальном приложении это не должно происходить, но для надежности
             await get_or_create_user(session, user_id)
 
         result = await session.execute(
@@ -79,8 +79,15 @@ async def find_artists_fuzzy(query: str):
 
 # --- НОВЫЕ И ОБНОВЛЕННЫЕ ФУНКЦИИ ---
 
-async def get_countries():
-    """Возвращает список всех стран из БД."""
+async def get_countries(home_country_selection: bool = False):
+    """
+    Возвращает список стран.
+    - Если home_country_selection=True, возвращает ограниченный список для первого выбора.
+    - Иначе, возвращает все страны из БД.
+    """
+    if home_country_selection:
+        return ["Беларусь", "Россия"]
+
     async with async_session() as session:
         result = await session.execute(select(Country.name).order_by(Country.name))
         return result.scalars().all()
@@ -113,29 +120,17 @@ async def find_cities_fuzzy(country_name: str, query: str, limit: int = 3):
         return best_matches
 
 
-# --- ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ФУНКЦИЯ ПОИСКА ---
 async def find_events_fuzzy(query: str, user_regions: list = None):
     async with async_session() as session:
-        # Сначала пробуем прямой поиск по части строки (быстрее)
         search_query_like = f'%{query}%'
-
-        # Запрос для поиска по названию события
         stmt_title = select(Event.event_id).where(Event.title.ilike(search_query_like))
-
-        # Запрос для поиска по имени артиста
         stmt_artist = select(Event.event_id).join(Event.artists).join(EventArtist.artist).where(
             Artist.name.ilike(search_query_like))
-
-        # Объединяем ID событий, найденных обоими способами
         event_ids_query = union(stmt_title, stmt_artist).subquery()
-
-        # Основной запрос для получения полных данных о событиях
         stmt = select(Event).options(
             selectinload(Event.venue).selectinload(Venue.city).selectinload(City.country),
             selectinload(Event.links)
         ).join(event_ids_query, Event.event_id == event_ids_query.c.event_id)
-
-        # Фильтруем по регионам пользователя, если они есть
         if user_regions:
             stmt = stmt.join(Event.venue).join(Venue.city).join(City.country).where(
                 or_(
@@ -143,11 +138,8 @@ async def find_events_fuzzy(query: str, user_regions: list = None):
                     Country.name.in_(user_regions)
                 )
             )
-
         result = await session.execute(stmt)
         events = result.scalars().unique().all()
-
-        # Если прямой поиск ничего не дал, используем нечеткий
         if not events:
             print("Прямой поиск не дал результатов, используется нечеткий поиск...")
             all_events_stmt = select(Event).options(
@@ -162,24 +154,18 @@ async def find_events_fuzzy(query: str, user_regions: list = None):
                         Country.name.in_(user_regions)
                     )
                 )
-
             all_events_result = await session.execute(all_events_stmt)
             all_events = all_events_result.scalars().unique().all()
-
             matches = []
             search_query_lower = query.lower()
             for event in all_events:
-                # Проверяем и название события, и имена артистов
                 title_score = fuzz.partial_ratio(search_query_lower, event.title.lower())
                 artist_scores = [fuzz.partial_ratio(search_query_lower, ea.artist.name.lower()) for ea in event.artists]
                 max_score = max([title_score] + artist_scores) if artist_scores else title_score
-
                 if max_score >= SIMILARITY_THRESHOLD:
                     matches.append((event, max_score))
-
             matches.sort(key=lambda x: x[1], reverse=True)
             return [match[0] for match in matches]
-
         return events
 
 
@@ -198,7 +184,6 @@ async def get_cities_for_category(category_name: str, user_regions: list):
                 City.name.in_(user_regions),
                 Country.name.in_(user_regions)
             ))
-
         result = await session.execute(stmt)
         return result.scalars().all()
 
@@ -251,10 +236,8 @@ async def get_subscribers_for_event(event: Event):
             .where(EventArtist.event_id == event.event_id)
         )
         artist_name = artist_result.scalar_one_or_none()
-
         if not artist_name:
             return []
-
         subscribers_result = await session.execute(
             select(User)
             .join(Subscription, User.user_id == Subscription.user_id)
@@ -267,3 +250,20 @@ async def get_subscribers_for_event(event: Event):
             )
         )
         return subscribers_result.scalars().all()
+
+
+async def get_all_master_artists() -> set:
+    """Возвращает множество всех имен артистов из БД в нижнем регистре."""
+    async with async_session() as session:
+        result = await session.execute(select(Artist.name))
+        return {name.lower() for name in result.scalars().all()}
+
+
+async def get_artists_by_lowercase_names(names: list[str]) -> list[str]:
+    """Принимает список имен в нижнем регистре и возвращает их с правильной капитализацией из БД."""
+    async with async_session() as session:
+        if not names:
+            return []
+        stmt = select(Artist.name).where(func.lower(Artist.name).in_(names))
+        result = await session.execute(stmt)
+        return result.scalars().all()
