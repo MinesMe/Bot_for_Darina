@@ -1,3 +1,5 @@
+# app/database/models.py
+
 import os
 from dotenv import load_dotenv
 
@@ -5,7 +7,7 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy import (
     Column, Integer, String, Text, ForeignKey,
-    TIMESTAMP, DECIMAL, BigInteger, JSON
+    TIMESTAMP, DECIMAL, BigInteger, JSON, Boolean
 )
 
 load_dotenv()
@@ -31,18 +33,15 @@ class Country(Base):
     __tablename__ = "countries"
     country_id = Column(Integer, primary_key=True)
     name = Column(String(255), unique=True, nullable=False)
-
     cities = relationship("City", back_populates="country")
     venues = relationship("Venue", back_populates="country")
 
 
-# --- НОВАЯ ТАБЛИЦА ---
 class City(Base):
     __tablename__ = "cities"
     city_id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     country_id = Column(Integer, ForeignKey("countries.country_id"), nullable=False)
-
     country = relationship("Country", back_populates="cities")
     venues = relationship("Venue", back_populates="city")
 
@@ -61,16 +60,12 @@ class Artist(Base):
     events = relationship("EventArtist", back_populates="artist")
 
 
-# --- ИЗМЕНЕННАЯ ТАБЛИЦА ---
 class Venue(Base):
     __tablename__ = "venues"
     venue_id = Column(Integer, primary_key=True)
     name = Column(String(500), nullable=False)
-
-    # Связь напрямую со страной и городом через ID
     country_id = Column(Integer, ForeignKey("countries.country_id"), nullable=False)
     city_id = Column(Integer, ForeignKey("cities.city_id"), nullable=False)
-
     country = relationship("Country", back_populates="venues")
     city = relationship("City", back_populates="venues")
     events = relationship("Event", back_populates="venue")
@@ -114,8 +109,22 @@ class User(Base):
     __tablename__ = 'users'
     user_id = Column(BigInteger, primary_key=True)
     username = Column(String, nullable=True)
-    regions = Column(JSON, nullable=True)
     language_code = Column(String(10), nullable=True)
+    home_country = Column(String(255), nullable=True)
+    home_city = Column(String(255), nullable=True)
+    preferred_event_types = Column(JSON, nullable=True)
+    # --- НОВОЕ ПОЛЕ ---
+    # Флаг, который покажет, проходил ли пользователь онбординг мобильности
+    mobility_onboarding_completed = Column(Boolean, default=False, nullable=False)
+
+
+# --- НОВАЯ ТАБЛИЦА ДЛЯ ШАБЛОНОВ ---
+class MobilityTemplate(Base):
+    __tablename__ = 'mobility_templates'
+    template_id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False)
+    template_name = Column(String(100), nullable=False)
+    regions = Column(JSON, nullable=False) # Список стран/городов
 
 
 class Subscription(Base):
@@ -124,6 +133,10 @@ class Subscription(Base):
     user_id = Column(BigInteger, ForeignKey('users.user_id', ondelete='CASCADE'))
     item_name = Column(String(500), nullable=False)
     category = Column(String(50), nullable=False)
+    # --- НОВЫЕ ПОЛЯ ДЛЯ ГИБКОЙ МОБИЛЬНОСТИ ---
+    # Либо ссылка на шаблон, либо кастомный список регионов
+    template_id = Column(Integer, ForeignKey('mobility_templates.template_id'), nullable=True)
+    custom_regions = Column(JSON, nullable=True)
 
 
 async def async_main():

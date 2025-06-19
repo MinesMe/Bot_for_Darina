@@ -7,17 +7,17 @@ from thefuzz import process as fuzzy_process, fuzz
 from datetime import datetime
 
 from .models import async_session, User, Subscription, Event, Artist, Venue, EventLink, EventType, EventArtist, Country, \
-    City
+    City, MobilityTemplate
 
 SIMILARITY_THRESHOLD = 85
 
 
-# --- Функции для работы с пользователями и подписками ---
+# --- Функции для работы с пользователями и предпочтениями ---
 async def get_or_create_user(session, user_id: int, username: str = None, lang_code: str = 'en'):
     result = await session.execute(select(User).where(User.user_id == user_id))
     user = result.scalar_one_or_none()
     if not user:
-        user = User(user_id=user_id, username=username, regions=[], language_code=lang_code)
+        user = User(user_id=user_id, username=username, language_code=lang_code)
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -27,20 +27,79 @@ async def get_or_create_user(session, user_id: int, username: str = None, lang_c
     return user
 
 
-async def get_user_regions(user_id: int):
-    async with async_session() as session:
-        result = await session.execute(select(User.regions).where(User.user_id == user_id))
-        return result.scalar_one()
-
-
-async def update_user_regions(user_id: int, regions: list):
+async def update_user_preferences(user_id: int, home_country: str, home_city: str, event_types: list):
     async with async_session() as session:
         user = await session.get(User, user_id)
         if user:
-            user.regions = regions
+            user.home_country = home_country
+            user.home_city = home_city
+            user.preferred_event_types = event_types
             await session.commit()
 
 
+async def get_user_preferences(user_id: int) -> dict | None:
+    async with async_session() as session:
+        result = await session.execute(
+            select(User.home_city, User.preferred_event_types)
+            .where(User.user_id == user_id)
+        )
+        prefs = result.first()
+        if prefs:
+            return {
+                "home_city": prefs.home_city,
+                "preferred_event_types": prefs.preferred_event_types
+            }
+        return None
+
+
+# --- ФУНКЦИИ ДЛЯ МОБИЛЬНОСТИ ---
+async def check_mobility_onboarding_status(user_id: int) -> bool:
+    async with async_session() as session:
+        result = await session.execute(select(User.mobility_onboarding_completed).where(User.user_id == user_id))
+        return result.scalar_one_or_none() or False
+
+
+async def set_mobility_onboarding_completed(user_id: int):
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if user:
+            user.mobility_onboarding_completed = True
+            await session.commit()
+
+
+async def get_user_mobility_templates(user_id: int) -> list[MobilityTemplate]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(MobilityTemplate).where(MobilityTemplate.user_id == user_id).order_by(MobilityTemplate.template_name)
+        )
+        return result.scalars().all()
+
+
+async def create_mobility_template(user_id: int, template_name: str, regions: list):
+    async with async_session() as session:
+        new_template = MobilityTemplate(user_id=user_id, template_name=template_name, regions=regions)
+        session.add(new_template)
+        await session.commit()
+
+
+async def delete_mobility_template(template_id: int):
+    """Удаляет шаблон мобильности и отвязывает его от всех подписок."""
+    async with async_session() as session:
+        # Сначала отвязываем шаблон от всех подписок, которые его используют
+        # Это необязательно, если в модели стоит ondelete="SET NULL", но так надежнее
+        await session.execute(
+            select(Subscription)
+            .where(Subscription.template_id == template_id)
+        ).update({"template_id": None})
+
+        # Затем удаляем сам шаблон
+        await session.execute(
+            delete(MobilityTemplate).where(MobilityTemplate.template_id == template_id)
+        )
+        await session.commit()
+
+
+# --- ФУНКЦИИ ДЛЯ ПОДПИСОК ---
 async def get_user_subscriptions(user_id: int) -> list:
     async with async_session() as session:
         result = await session.execute(
@@ -48,16 +107,24 @@ async def get_user_subscriptions(user_id: int) -> list:
         return result.scalars().all()
 
 
-async def add_subscription(user_id: int, item_name: str, category: str):
+async def add_subscription(user_id: int, item_name: str, category: str, template_id: int = None,
+                           custom_regions: list = None):
     async with async_session() as session:
         user_result = await session.execute(select(User).where(User.user_id == user_id))
         if not user_result.scalar_one_or_none():
             await get_or_create_user(session, user_id)
 
-        result = await session.execute(
+        existing_sub = await session.execute(
             select(Subscription).where(and_(Subscription.user_id == user_id, Subscription.item_name == item_name)))
-        if not result.scalar_one_or_none():
-            session.add(Subscription(user_id=user_id, item_name=item_name, category=category))
+        if not existing_sub.scalar_one_or_none():
+            new_sub = Subscription(
+                user_id=user_id,
+                item_name=item_name,
+                category=category,
+                template_id=template_id,
+                custom_regions=custom_regions
+            )
+            session.add(new_sub)
             await session.commit()
 
 
@@ -68,6 +135,7 @@ async def remove_subscription(user_id: int, item_name: str):
         await session.commit()
 
 
+# --- ФУНКЦИИ ПОИСКА И АФИШИ ---
 async def find_artists_fuzzy(query: str):
     async with async_session() as session:
         result = await session.execute(select(Artist.name))
@@ -77,14 +145,7 @@ async def find_artists_fuzzy(query: str):
         return matches
 
 
-# --- НОВЫЕ И ОБНОВЛЕННЫЕ ФУНКЦИИ ---
-
 async def get_countries(home_country_selection: bool = False):
-    """
-    Возвращает список стран.
-    - Если home_country_selection=True, возвращает ограниченный список для первого выбора.
-    - Иначе, возвращает все страны из БД.
-    """
     if home_country_selection:
         return ["Беларусь", "Россия"]
 
@@ -94,7 +155,6 @@ async def get_countries(home_country_selection: bool = False):
 
 
 async def get_top_cities_for_country(country_name: str, limit: int = 6):
-    """Возвращает топ-N городов для страны из БД."""
     async with async_session() as session:
         result = await session.execute(
             select(City.name)
@@ -107,7 +167,6 @@ async def get_top_cities_for_country(country_name: str, limit: int = 6):
 
 
 async def find_cities_fuzzy(country_name: str, query: str, limit: int = 3):
-    """Ищет города по нечеткому совпадению в указанной стране."""
     async with async_session() as session:
         result = await session.execute(
             select(City.name).join(Country).where(Country.name == country_name)
@@ -141,7 +200,6 @@ async def find_events_fuzzy(query: str, user_regions: list = None):
         result = await session.execute(stmt)
         events = result.scalars().unique().all()
         if not events:
-            print("Прямой поиск не дал результатов, используется нечеткий поиск...")
             all_events_stmt = select(Event).options(
                 selectinload(Event.venue).selectinload(Venue.city).selectinload(City.country),
                 selectinload(Event.links),
@@ -212,6 +270,7 @@ async def get_grouped_events_by_city_and_category(city_name: str, category: str)
         return result.all()
 
 
+# --- ФУНКЦИИ ДЛЯ УВЕДОМЛЕНИЙ ---
 async def find_upcoming_events():
     async with async_session() as session:
         today = datetime.now()
@@ -222,45 +281,53 @@ async def find_upcoming_events():
             )
         ).options(
             selectinload(Event.venue).selectinload(Venue.city).selectinload(City.country),
-            selectinload(Event.links)
+            selectinload(Event.links),
+            selectinload(Event.artists).selectinload(EventArtist.artist)
         )
         result = await session.execute(stmt)
-        return result.scalars().all()
+        return result.scalars().unique().all()
 
 
 async def get_subscribers_for_event(event: Event):
     async with async_session() as session:
-        artist_result = await session.execute(
-            select(Artist.name)
-            .join(EventArtist, EventArtist.artist_id == Artist.artist_id)
-            .where(EventArtist.event_id == event.event_id)
-        )
-        artist_name = artist_result.scalar_one_or_none()
-        if not artist_name:
+        if not event.artists:
             return []
-        subscribers_result = await session.execute(
-            select(User)
-            .join(Subscription, User.user_id == Subscription.user_id)
-            .where(
-                Subscription.item_name == artist_name,
-                or_(
-                    event.venue.city.name.in_(User.regions),
-                    event.venue.city.country.name.in_(User.regions)
-                )
-            )
+
+        artist_name = event.artists[0].artist.name
+
+        subs_on_artist_result = await session.execute(
+            select(Subscription)
+            .options(selectinload(Subscription.user))
+            .where(Subscription.item_name == artist_name)
         )
-        return subscribers_result.scalars().all()
+        subs_on_artist = subs_on_artist_result.scalars().all()
+
+        subscribers_to_notify = []
+        for sub in subs_on_artist:
+            regions_to_check = []
+            if sub.template_id:
+                template = await session.get(MobilityTemplate, sub.template_id)
+                if template:
+                    regions_to_check = template.regions
+            else:
+                regions_to_check = sub.custom_regions or []
+
+            event_country = event.venue.city.country.name
+            event_city = event.venue.city.name
+            if event_country in regions_to_check or event_city in regions_to_check:
+                subscribers_to_notify.append(sub.user)
+
+        return subscribers_to_notify
 
 
+# --- ПРОЧИЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async def get_all_master_artists() -> set:
-    """Возвращает множество всех имен артистов из БД в нижнем регистре."""
     async with async_session() as session:
         result = await session.execute(select(Artist.name))
         return {name.lower() for name in result.scalars().all()}
 
 
 async def get_artists_by_lowercase_names(names: list[str]) -> list[str]:
-    """Принимает список имен в нижнем регистре и возвращает их с правильной капитализацией из БД."""
     async with async_session() as session:
         if not names:
             return []
