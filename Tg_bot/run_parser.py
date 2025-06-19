@@ -4,9 +4,12 @@ import json
 from datetime import datetime
 from sqlalchemy import select, delete, inspect, func
 
+# from Bot_for_Darina.Tg_bot.app.database.requests import extract_city_from_place, get_or_create
 from app.database.models import async_session, engine, Country, Venue, EventType, Artist, Event, EventLink, EventArtist
 from parsers.configs import ALL_CONFIGS
 from parsers.main_parser import parse_site
+
+import app.database.requests as rq
 
 
 async def check_tables_exist():
@@ -62,32 +65,9 @@ async def clear_event_data(session):
     print("Старые данные о событиях удалены.")
 
 
-async def get_or_create(session, model, **kwargs):
-    instance = await session.execute(select(model).filter_by(**kwargs))
-    instance = instance.scalar_one_or_none()
-    if instance:
-        return instance
-    else:
-        instance = model(**kwargs)
-        session.add(instance)
-        await session.flush()
-        return instance
 
 
-def extract_city_from_place(place_string: str) -> str:
-    if not place_string:
-        return "Минск"
-    parts = place_string.split(',')
-    if len(parts) > 1:
-        city = parts[-1].strip()
-        if not any(char.isdigit() for char in city):
-            return city
-    known_cities = ["Минск", "Брест", "Витебск", "Гомель", "Гродно", "Могилев", "Лида", "Молодечно", "Сморгонь",
-                    "Несвиж"]
-    for city in known_cities:
-        if city.lower() in place_string.lower():
-            return city
-    return "Минск"
+
 
 
 async def process_all_sites():
@@ -99,8 +79,7 @@ async def process_all_sites():
 
     async with async_session() as session:
         await populate_artists_if_needed(session)
-        await clear_event_data(session)
-
+        
         all_events_with_types = []
         for site_config in ALL_CONFIGS:
             event_type_name = site_config.get('event_type', 'Другое')
@@ -115,40 +94,31 @@ async def process_all_sites():
 
         print(f"Всего найдено {len(all_events_with_types)} событий. Начинаю обработку и сохранение в базу данных...")
 
-        country_belarus = await get_or_create(session, Country, name="Беларусь")
+        country_belarus = await rq.get_or_create(session, Country, name="Беларусь")
 
         for event_data in all_events_with_types:
-            event_type_obj = await get_or_create(session, EventType, name=event_data['event_type'])
-            city = extract_city_from_place(event_data['place'])
-            venue = await get_or_create(session, Venue, name=event_data['place'], city=city,
-                                        country_id=country_belarus.country_id)
-
-            # Теперь ищем артиста в нашей большой базе
-            artist = await get_or_create(session, Artist, name=event_data['title'])
-
             start_datetime = None
             if event_data.get('timestamp'):
                 try:
                     start_datetime = datetime.fromtimestamp(event_data['timestamp'])
                 except (ValueError, TypeError):
                     start_datetime = None
+            event_data_for_test = {
+                "event_type": event_data['event_type'],      # Используется для event_type_obj
+                "place": event_data['place'], # Используется для venue (и extract_city_from_place)
+                "country": country_belarus.country_id, # Используется для venue (country_id)
+                "event_title": event_data['title'],    # Используется для artist (name)
+                "timestamp": start_datetime, # Используется для date_start (timestamp), можно None
+                "time": event_data['time'],    # Используется для description нового Event
+                "price_min": event_data.get('price_min'),              # Используется для price_min нового Event (опционально)
+                "price_max": event_data.get('price_max'),             # Используется для price_max нового Event (опционально)
+                "link": event_data['link'] # Используется для EventLink (url)
+            }
+            
+            await rq.add_unique_event(event_data_for_test)
+            
 
-            new_event = Event(
-                title=event_data['title'],
-                description=event_data['time'],
-                type_id=event_type_obj.type_id,
-                venue_id=venue.venue_id,
-                date_start=start_datetime,
-                price_min=event_data.get('price_min'),
-                price_max=event_data.get('price_max')
-            )
 
-            event_artist_link = EventArtist(event=new_event, artist=artist)
-            event_url_link = EventLink(event=new_event, url=event_data['link'], type="bilety")
-
-            session.add_all([new_event, event_artist_link, event_url_link])
-
-        await session.commit()
     print("Обработка завершена. Новые данные успешно сохранены в базу.")
 
 

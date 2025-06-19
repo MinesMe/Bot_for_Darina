@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
 from thefuzz import fuzz
 from datetime import datetime, timedelta
 
+
 from .models import async_session, User, Subscription, Event, Artist, Venue, EventLink, EventType, EventArtist
 
 SIMILARITY_THRESHOLD = 85
@@ -171,3 +172,84 @@ async def get_subscribers_for_event(event: Event):
             .where(Subscription.item_name == artist_name)
         )
         return subscribers_result.scalars().all()
+    
+
+async def get_or_create(session, model, **kwargs):
+    instance = await session.execute(select(model).filter_by(**kwargs))
+    instance = instance.scalar_one_or_none()
+    if instance:
+        print(f"DEBUG: {model.__name__} с параметрами {kwargs} НАЙДЕН. INSERT не будет.") # Добавил для отладки
+        return instance
+    else:
+        instance = model(**kwargs)
+        session.add(instance)
+        await session.flush()
+        print(f"DEBUG: {model.__name__} с параметрами {kwargs} СОЗДАН. Ожидаем INSERT после commit.")
+        return instance
+    
+
+
+def extract_city_from_place(place_string: str) -> str:
+    if not place_string:
+        return "Минск"
+    parts = place_string.split(',')
+    if len(parts) > 1:
+        city = parts[-1].strip()
+        if not any(char.isdigit() for char in city):
+            return city
+    known_cities = ["Минск", "Брест", "Витебск", "Гомель", "Гродно", "Могилев", "Лида", "Молодечно", "Сморгонь",
+                    "Несвиж"]
+    for city in known_cities:
+        if city.lower() in place_string.lower():
+            return city
+    return "Минск"
+
+async def add_unique_event(event):
+    async with async_session() as session:
+        try:
+
+            # 1. Работа с типом события
+            event_type_obj = await get_or_create(session, EventType, name=event["event_type"])
+            
+            # 2. Извлечение города и работа с местом проведения
+            city = extract_city_from_place(event['place'])
+            venue = await get_or_create(session, Venue, name=event['place'], city=city,
+                                        country_id=event["country"])
+
+            # 3. Работа с артистом
+            artist = await get_or_create(session, Artist, name=event['event_title'])
+
+            # 4. Обработка времени начала события
+            start_datetime = None
+            if event.get('timestamp'):
+                try:
+                    start_datetime = datetime.fromtimestamp(event['timestamp'])
+                except (ValueError, TypeError):
+                    start_datetime = None
+
+            # 5. Подготовка данных для нового события
+            new_event_data = {
+                "title": event['event_title'],
+                "description": event['time'], # Здесь используется "time" для описания, возможно, это опечатка?
+                "type_id": event_type_obj.type_id,
+                "venue_id": venue.venue_id,
+                "date_start": start_datetime,
+                "price_min": event.get('price_min'),
+                "price_max": event.get('price_max')
+            }
+            
+            # 6. Создание (или получение) самого события
+            new_event = await get_or_create(session, Event, **new_event_data)
+            
+            # 7. Связывание события с артистом
+            event_artist_link = {"event_id": new_event.event_id, "artist_id": artist.artist_id} # Используем event_id и artist_id
+            await get_or_create(session, EventArtist, **event_artist_link)
+            
+            # 8. Добавление ссылки на событие
+            event_url_link = {"event_id": new_event.event_id, "url": event['link'], "type": "bilety"} # Используем event_id
+            await get_or_create(session, EventLink, **event_url_link)
+
+            # 9. Сохранение всех изменений
+            await session.commit()
+        except Exception as e:
+            print("Ошибка при добавление ивента в бд")

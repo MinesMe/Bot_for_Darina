@@ -1,3 +1,4 @@
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -295,6 +296,23 @@ async def search_query_handler(message: Message, state: FSMContext):
     await message.answer(response_text, disable_web_page_preview=True, parse_mode=ParseMode.HTML)
 
 
+COUNTRY_ID_GERMANY = 1 # Просто пример ID
+
+event_data_for_test = {
+    "event_type": "Концерт",      # Используется для event_type_obj
+    "place": "Белорусь", # Используется для venue (и extract_city_from_place)
+    "country": COUNTRY_ID_GERMANY, # Используется для venue (country_id)
+    "event_title": "Коцнерт Imagine Dragons",    # Используется для artist (name)
+    "timestamp": datetime(2026, 8, 30, 19, 1, 0).timestamp(), # Используется для date_start (timestamp), можно None
+    "time": "Начало в 19:00",    # Используется для description нового Event
+    "price_min": 50,              # Используется для price_min нового Event (опционально)
+    "price_max": 250,             # Используется для price_max нового Event (опционально)
+    "link": "https://example.com/tickets/imagine_dragons_berlin" # Используется для EventLink (url)
+}
+
+
 @router.message(F.text)
 async def any_text_handler(message: Message):
-    await message.reply("Я не понимаю эту команду. Воспользуйтесь кнопками меню. Для поиска нажмите '🔎 Поиск'.")
+    await db.add_unique_event(event_data_for_test)
+    print("success")
+    # await message.reply("Я не понимаю эту команду. Воспользуйтесь кнопками меню. Для поиска нажмите '🔎 Поиск'.")
