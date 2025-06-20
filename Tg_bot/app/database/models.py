@@ -1,14 +1,19 @@
 # app/database/models.py
 
+import asyncio
+from functools import partial
 import os
+from aiogram import Bot
 from dotenv import load_dotenv
 
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy import (
-    Column, Integer, String, Text, ForeignKey,
-    TIMESTAMP, DECIMAL, BigInteger, JSON, Boolean
+    Column, Integer, NullPool, String, Text, ForeignKey,
+    TIMESTAMP, DECIMAL, BigInteger, JSON, Boolean, text
 )
+
+
 
 load_dotenv()
 DB_HOST = os.getenv("DB_HOST")
@@ -115,7 +120,8 @@ class User(Base):
     preferred_event_types = Column(JSON, nullable=True)
     # --- НОВОЕ ПОЛЕ ---
     # Флаг, который покажет, проходил ли пользователь онбординг мобильности
-    mobility_onboarding_completed = Column(Boolean, default=False, nullable=False)
+    main_geo_completed = Column(Boolean, default=False, nullable=False)
+    general_geo_completed = Column(Boolean, default=False, nullable=False)
 
 
 # --- НОВАЯ ТАБЛИЦА ДЛЯ ШАБЛОНОВ ---
@@ -139,8 +145,91 @@ class Subscription(Base):
     custom_regions = Column(JSON, nullable=True)
 
 
+SQL_CREATE_TRIGGER_FUNCTION = """
+CREATE OR REPLACE FUNCTION notify_new_event()
+RETURNS TRIGGER AS $$
+DECLARE
+    payload JSONB;
+BEGIN
+    -- Собираем вложенные данные об ивенте, типе, площадке и стране
+    SELECT jsonb_build_object(
+        'event_id', e.event_id,
+        'title', e.title,
+        'description', e.description,
+        'date_start', e.date_start,
+        'date_end', e.date_end,
+        'price_min', e.price_min,
+        'price_max', e.price_max,
+        'event_type', jsonb_build_object(
+            'name', et.name
+        ),
+        'venue', jsonb_build_object(
+            'name', v.name,
+            'city', cities.city_id
+        ),
+        'country', jsonb_build_object(
+            'name', c.name
+        )
+    )
+    INTO payload
+    FROM events e
+    JOIN event_types et ON e.type_id = et.type_id
+    
+    JOIN venues v ON e.venue_id = v.venue_id
+    JOIN cities cities ON v.city_id = cities.city_id
+    JOIN countries c ON v.country_id = c.country_id
+    WHERE e.event_id = NEW.event_id;
+
+    -- Добавляем данные об артисте
+    payload := jsonb_set(
+        payload,
+        '{artist}',
+        (
+            SELECT to_jsonb(a)
+            FROM artists a
+            WHERE a.artist_id = NEW.artist_id
+        )
+    );
+
+    -- Отправляем JSON через канал
+    PERFORM pg_notify('new_event_channel', payload::text);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+SQL_CREATE_TRIGGER = """
+CREATE TRIGGER new_event_trigger
+AFTER INSERT ON event_artists
+FOR EACH ROW
+EXECUTE FUNCTION notify_new_event();
+"""
+
+
+
+listener_engine = create_async_engine(url=SQL_ALCHEMY, poolclass=NullPool)
+
+
+
+
+
 async def async_main():
     print("Инициализация базы данных: проверка и создание таблиц...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("Таблицы успешно созданы или уже существуют.")
+
+    print("Проверка и создание функции-триггера и триггера для 'events'...")
+    try:
+        async with engine.connect() as conn:
+        # Выполняем SQL-код для создания функции-триггера
+            await conn.execute(text("DROP TRIGGER IF EXISTS new_event_trigger ON event_artists;"))
+            await conn.execute(text(SQL_CREATE_TRIGGER_FUNCTION))
+            # Выполняем SQL-код для создания самого триггера
+            await conn.execute(text(SQL_CREATE_TRIGGER))
+            await conn.commit() # Важно зафиксировать изменения
+    except Exception as e: 
+        print(e)
+
+    print("Функция-триггер и триггер успешно созданы или обновлены.")

@@ -1,5 +1,6 @@
 # app/handlers.py
 
+from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -32,6 +33,7 @@ class SubscriptionFlow(StatesGroup):
     waiting_for_artist_name = State()
     waiting_for_playlist_url = State()
     selecting_from_playlist = State()
+
 
 
 async def set_main_menu(bot: Bot, lang: str):
@@ -539,6 +541,22 @@ async def search_query_handler(message: Message, state: FSMContext):
     await message.answer(response_text, disable_web_page_preview=True, parse_mode=ParseMode.HTML)
 
 
+COUNTRY_ID_GERMANY = 1 # Просто пример ID
+
+event_data_for_test = {
+    "event_type": "Концерт",      # Используется для event_type_obj
+    "place": "Белорусь", # Используется для venue (и extract_city_from_place)
+    "country": COUNTRY_ID_GERMANY, # Используется для venue (country_id)
+    "event_title": "Коцнерт Imagine Dragons",    # Используется для artist (name)
+    "timestamp": datetime(2026, 8, 30, 19, 1, 0).timestamp(), # Используется для date_start (timestamp), можно None
+    "time": "Начало в 19:00",    # Используется для description нового Event
+    "price_min": 50,              # Используется для price_min нового Event (опционально)
+    "price_max": 250,             # Используется для price_max нового Event (опционально)
+    "link": "https://example.com/tickets/imagine_dragons_berlin" # Используется для EventLink (url)
+}
+
+
 @router.message(F.text.startswith('/'))
 async def any_unregistered_command_handler(message: Message):
     await message.reply("Я не знаю такой команды. Воспользуйтесь кнопками меню.")
+

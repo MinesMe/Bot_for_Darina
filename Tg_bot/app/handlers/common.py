@@ -1,5 +1,6 @@
 # app/handlers/common.py
 
+from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -83,7 +84,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     if user.home_country:
         await message.answer(
             lexicon.get('main_menu_greeting').format(first_name=hbold(message.from_user.first_name)),
-            reply_markup=kb.get_main_menu_keyboard(lexicon), parse_mode=ParseMode.HTML
+            reply_markup=kb.get_main_geo_settings(lexicon), parse_mode=ParseMode.HTML
         )
         return
     await start_onboarding_process(message, state, lexicon)
@@ -105,7 +106,23 @@ async def cq_change_location(callback: CallbackQuery, state: FSMContext):
     lexicon = Lexicon(callback.from_user.language_code)
     await start_onboarding_process(callback, state, lexicon)
 
+COUNTRY_ID_GERMANY = 1 # Просто пример ID
+
+event_data_for_test = {
+    "event_type": "Концерт",      # Используется для event_type_obj
+    "place": "Белорусь", # Используется для venue (и extract_city_from_place)
+    "country": COUNTRY_ID_GERMANY, # Используется для venue (country_id)
+    "event_title": "Коцнерт Imagine Dragons",    # Используется для artist (name)
+    "timestamp": datetime(2019, 9, 14, 19, 1, 0).timestamp(), # Используется для date_start (timestamp), можно None
+    "time": "Начало в 19:00",    # Используется для description нового Event
+    "price_min": 50,              # Используется для price_min нового Event (опционально)
+    "price_max": 250,             # Используется для price_max нового Event (опционально)
+    "link": "https://example.com/tickets/imagine_dragons_berlin" # Используется для EventLink (url)
+}
+
+
 
 @router.message(F.text.startswith('/'))
 async def any_unregistered_command_handler(message: Message):
-    await message.reply("Я не знаю такой команды. Воспользуйтесь кнопками меню.")
+    await db.add_unique_event(event_data_for_test)
+    # await message.reply("Я не знаю такой команды. Воспользуйтесь кнопками меню.")

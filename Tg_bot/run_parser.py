@@ -8,6 +8,7 @@ from app.database.models import async_session, engine, Country, City, Venue, Eve
     EventArtist
 from parsers.configs import ALL_CONFIGS
 from parsers.main_parser import parse_site
+import app.database.requests as rq
 
 
 async def check_tables_exist():
@@ -55,41 +56,6 @@ async def clear_event_data(session):
     print("Старые данные о событиях удалены.")
 
 
-async def get_or_create(session, model, **kwargs):
-    instance = await session.execute(select(model).filter_by(**kwargs))
-    instance = instance.scalar_one_or_none()
-    if instance:
-        return instance
-    else:
-        instance = model(**kwargs)
-        session.add(instance)
-        await session.flush()
-        return instance
-
-
-def extract_city_from_place(place_string: str) -> str | None:
-    if not place_string:
-        return None
-    # Пробуем найти город по запятой
-    parts = place_string.split(',')
-    if len(parts) > 1:
-        city_candidate = parts[-1].strip()
-        # Простая проверка, что это не номер дома или что-то подобное
-        if not any(char.isdigit() for char in city_candidate) and len(city_candidate) > 2:
-            return city_candidate
-
-    # Если по запятой не нашли, ищем по ключевым словам в строке
-    # Этот список можно расширить городами, которые часто встречаются в афишах
-    known_cities_pattern = r'\b(Минск|Брест|Витебск|Гомель|Гродно|Могилев|Лида|Москва|Питер|СПб)\b'
-    match = re.search(known_cities_pattern, place_string, re.IGNORECASE)
-    if match:
-        city = match.group(1)
-        if city.lower() in ['питер', 'спб']:
-            return 'Санкт-Петербург'
-        return city
-
-    return None
-
 
 async def process_all_sites():
     tables_exist = await check_tables_exist()
@@ -100,13 +66,6 @@ async def process_all_sites():
 
     async with async_session() as session:
         await populate_artists_if_needed(session)
-        await clear_event_data(session)
-
-        print("Кэширование стран и городов из базы данных...")
-        cities_res = await session.execute(select(City).options(selectinload(City.country)))
-        cities_cache = {city.name.lower(): (city.city_id, city.country.country_id) for city in cities_res.scalars()}
-        print("Кэширование завершено.")
-
         all_events_with_types = []
         for site_config in ALL_CONFIGS:
             event_type_name = site_config.get('event_type', 'Другое')
@@ -122,50 +81,27 @@ async def process_all_sites():
         print(f"Всего найдено {len(all_events_with_types)} событий. Начинаю обработку и сохранение в базу данных...")
 
         for event_data in all_events_with_types:
-            event_type_obj = await get_or_create(session, EventType, name=event_data['event_type'])
-
-            parsed_city_name = extract_city_from_place(event_data['place'])
-
-            if not parsed_city_name:
-                print(
-                    f"  - ПРЕДУПРЕЖДЕНИЕ: Не удалось определить город для '{event_data['place']}'. Пропускаю событие '{event_data['title']}'.")
-                continue
-
-            city_info = cities_cache.get(parsed_city_name.lower())
-
-            if not city_info:
-                print(
-                    f"  - ПРЕДУПРЕЖДЕНИЕ: Город '{parsed_city_name}' не найден в базе. Пропускаю событие '{event_data['title']}'.")
-                continue
-
-            city_id, country_id = city_info
-
-            venue = await get_or_create(session, Venue, name=event_data['place'], city_id=city_id,
-                                        country_id=country_id)
-
-            artist = await get_or_create(session, Artist, name=event_data['title'])
-
             start_datetime = None
             if event_data.get('timestamp'):
                 try:
                     start_datetime = datetime.fromtimestamp(event_data['timestamp'])
                 except (ValueError, TypeError):
                     start_datetime = None
+            event_data_for_test = {
+                "event_type": event_data['event_type'],      # Используется для event_type_obj
+                "place": event_data['place'], # Используется для venue (и extract_city_from_place)
+                "country": 1, # Используется для venue (country_id)
+                "event_title": event_data['title'],    # Используется для artist (name)
+                "timestamp": start_datetime, # Используется для date_start (timestamp), можно None
+                "time": event_data['time'],    # Используется для description нового Event
+                "price_min": event_data.get('price_min'),              # Используется для price_min нового Event (опционально)
+                "price_max": event_data.get('price_max'),             # Используется для price_max нового Event (опционально)
+                "link": event_data['link'] # Используется для EventLink (url)
+            }
 
-            new_event = Event(
-                title=event_data['title'],
-                description=event_data['time'],
-                type_id=event_type_obj.type_id,
-                venue_id=venue.venue_id,
-                date_start=start_datetime,
-                price_min=event_data.get('price_min'),
-                price_max=event_data.get('price_max')
-            )
 
-            event_artist_link = EventArtist(event=new_event, artist=artist)
-            event_url_link = EventLink(event=new_event, url=event_data['link'], type="bilety")
-
-            session.add_all([new_event, event_artist_link, event_url_link])
+            await rq.add_unique_event(event_data_for_test)
+            
 
         await session.commit()
     print("Обработка завершена. Новые данные успешно сохранены в базу.")

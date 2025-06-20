@@ -35,9 +35,14 @@ def get_profile_keyboard(lexicon) -> InlineKeyboardMarkup:
 def get_country_selection_keyboard(countries: list, lexicon) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for country in countries:
-        builder.button(text=country, callback_data=f"select_home_country:{country}")
+        builder.button(text=country, callback_data=f"main_geo_settings:{country}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="➡️ Пропустить", callback_data="skip_onboarding"))
+    return builder.as_markup()
+
+def get_main_geo_settings(lexicon)-> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Настроить", callback_data=f"select_home_country"))
+    builder.row(InlineKeyboardButton(text="Пропустить настройку", callback_data=f"finish_preferences_selection:{False}"))
     return builder.as_markup()
 
 def get_home_city_selection_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup:
@@ -46,7 +51,6 @@ def get_home_city_selection_keyboard(top_cities: list, lexicon) -> InlineKeyboar
         builder.button(text=city, callback_data=f"select_home_city:{city}")
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text="🔎 Найти другой город", callback_data="search_for_home_city"))
-    builder.row(InlineKeyboardButton(text="➡️ Пропустить этот шаг", callback_data="skip_city_selection"))
     return builder.as_markup()
 
 def get_found_home_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboardMarkup:
@@ -57,11 +61,6 @@ def get_found_home_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboar
     builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data="back_to_city_selection"))
     return builder.as_markup()
 
-def get_setup_filter_preference_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="👍 Да, настроить", callback_data="setup_filters_yes")
-    builder.button(text="👎 Нет, спасибо", callback_data="setup_filters_no")
-    return builder.as_markup()
 
 def get_event_type_selection_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
     if selected_types is None: selected_types = []
@@ -70,7 +69,7 @@ def get_event_type_selection_keyboard(lexicon, selected_types: list = None) -> I
         text = f"✅ {event_type}" if event_type in selected_types else f"⬜️ {event_type}"
         builder.button(text=text, callback_data=f"toggle_event_type:{event_type}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data="finish_preferences_selection"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data="finish_preferences_selection:{True}"))
     return builder.as_markup()
 
 def get_back_to_city_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
@@ -186,4 +185,18 @@ def get_cities_keyboard(cities: list, category: str) -> InlineKeyboardMarkup:
     for city in cities:
         builder.button(text=city, callback_data=f"city:{city}:{category}")
     builder.adjust(2)
+    return builder.as_markup()
+
+#---------- АФИША ----------
+
+def get_afisha_settings()-> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Настроить", callback_data=f"afisha_main_geo_settings"))
+    builder.row(InlineKeyboardButton(text="Пропустить настройку", callback_data=f"skip_afisha_main_geo"))
+    return builder.as_markup()
+
+def get_afisha_settings_type()-> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="По мои настройкам", callback_data=f"afisha_defautl_type_settings"))
+    builder.row(InlineKeyboardButton(text="Другую", callback_data=f"afisha_another_type_settings"))
     return builder.as_markup()

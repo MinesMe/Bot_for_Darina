@@ -27,25 +27,27 @@ async def get_or_create_user(session, user_id: int, username: str = None, lang_c
     return user
 
 
-async def update_user_preferences(user_id: int, home_country: str, home_city: str, event_types: list):
+async def update_user_preferences(user_id: int, home_country: str, home_city: str, event_types: list, main_geo_completed):
     async with async_session() as session:
         user = await session.get(User, user_id)
         if user:
             user.home_country = home_country
             user.home_city = home_city
             user.preferred_event_types = event_types
+            user.main_geo_completed = main_geo_completed
             await session.commit()
 
 
 async def get_user_preferences(user_id: int) -> dict | None:
     async with async_session() as session:
         result = await session.execute(
-            select(User.home_city, User.preferred_event_types)
+            select(User.home_city, User.preferred_event_types, User.home_country)
             .where(User.user_id == user_id)
         )
         prefs = result.first()
         if prefs:
             return {
+                "home_country": prefs.home_country ,
                 "home_city": prefs.home_city,
                 "preferred_event_types": prefs.preferred_event_types
             }
@@ -53,17 +55,17 @@ async def get_user_preferences(user_id: int) -> dict | None:
 
 
 # --- ФУНКЦИИ ДЛЯ МОБИЛЬНОСТИ ---
-async def check_mobility_onboarding_status(user_id: int) -> bool:
+async def check_main_geo_status(user_id: int) -> bool:
     async with async_session() as session:
-        result = await session.execute(select(User.mobility_onboarding_completed).where(User.user_id == user_id))
+        result = await session.execute(select(User.main_geo_completed).where(User.user_id == user_id))
         return result.scalar_one_or_none() or False
 
 
-async def set_mobility_onboarding_completed(user_id: int):
+async def set_main_geo_completed(user_id: int):
     async with async_session() as session:
         user = await session.get(User, user_id)
         if user:
-            user.mobility_onboarding_completed = True
+            user.main_geo_completed = True
             await session.commit()
 
 
@@ -334,3 +336,100 @@ async def get_artists_by_lowercase_names(names: list[str]) -> list[str]:
         stmt = select(Artist.name).where(func.lower(Artist.name).in_(names))
         result = await session.execute(stmt)
         return result.scalars().all()
+    
+
+
+async def get_or_create(session, model, **kwargs):
+    instance = await session.execute(select(model).filter_by(**kwargs))
+    instance = instance.scalar_one_or_none()
+    if instance:
+        return instance
+    else:
+        instance = model(**kwargs)
+        session.add(instance)
+        await session.flush()
+        return instance
+    
+
+
+def extract_city_from_place(place_string: str) -> str:
+    if not place_string:
+        return "Минск"
+    parts = place_string.split(',')
+    if len(parts) > 1:
+        city = parts[-1].strip()
+        if not any(char.isdigit() for char in city):
+            return city
+    known_cities = ["Минск", "Брест", "Витебск", "Гомель", "Гродно", "Могилев", "Лида", "Молодечно", "Сморгонь",
+                    "Несвиж"]
+    for city in known_cities:
+        if city.lower() in place_string.lower():
+            return city
+    return "Минск"
+
+async def add_unique_event(event):
+    async with async_session() as session:
+        try:
+
+            # 1. Работа с типом события
+            event_type_obj = await get_or_create(session, EventType, name=event["event_type"])
+            
+            # 2. Извлечение города и работа с местом проведения
+            city = extract_city_from_place(event['place'])
+            venue = await get_or_create(session, Venue, name=event['place'], city_id=2,
+                                        country_id=1)
+
+            # 3. Работа с артистом
+            artist = await get_or_create(session, Artist, name=event['event_title'])
+
+            # 4. Обработка времени начала события
+            start_datetime = None
+            if event.get('timestamp'):
+                try:
+                    start_datetime = datetime.fromtimestamp(event['timestamp'])
+                except (ValueError, TypeError):
+                    start_datetime = None
+
+            # 5. Подготовка данных для нового события
+            new_event_data = {
+                "title": event['event_title'],
+                "description": event['time'], # Здесь используется "time" для описания, возможно, это опечатка?
+                "type_id": event_type_obj.type_id,
+                "venue_id": venue.venue_id,
+                "date_start": start_datetime,
+                "price_min": event.get('price_min'),
+                "price_max": event.get('price_max')
+            }
+            
+            # 6. Создание (или получение) самого события
+            new_event = await get_or_create(session, Event, **new_event_data)
+            
+            # 7. Связывание события с артистом
+            event_artist_link = {"event_id": new_event.event_id, "artist_id": artist.artist_id} # Используем event_id и artist_id
+            await get_or_create(session, EventArtist, **event_artist_link)
+            
+            # 8. Добавление ссылки на событие
+            event_url_link = {"event_id": new_event.event_id, "url": event['link'], "type": "bilety"} # Используем event_id
+            await get_or_create(session, EventLink, **event_url_link)
+
+            # 9. Сохранение всех изменений
+            await session.commit()
+        except Exception as e:
+            print("Ошибка при добавление ивента в бд: ")
+            print(e)
+
+
+async def get_subscribers_for_event_title(event_title: str) -> list[int]:
+    async with async_session() as session: # Открываем асинхронную сессию
+        
+        stmt = select(Subscription.user_id).where(
+            Subscription.item_name == event_title
+        ).distinct() # Добавляем distinct() для уникальных ID
+
+        # Выполняем запрос
+        result = await session.execute(stmt)
+        
+        # Получаем все результаты. scalar_all() извлекает значения из первого столбца (user_id).
+        user_ids = result.scalars().all()
+        
+        return list(user_ids) # Возвращаем список user_id
