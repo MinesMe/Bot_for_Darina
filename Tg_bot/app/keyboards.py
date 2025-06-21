@@ -24,10 +24,14 @@ def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
     return builder.as_markup(resize_keyboard=True)
 
 def get_profile_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """
+    Новая клавиатура для меню профиля.
+    """
     builder = InlineKeyboardBuilder()
-    builder.button(text=lexicon.get('profile_button_location'), callback_data="change_location")
-    builder.button(text=lexicon.get('profile_button_subs'), callback_data="show_my_subscriptions_from_profile")
-    builder.adjust(1)
+    builder.button(text="📍 Изменить основное гео", callback_data="edit_main_geo")
+    builder.button(text="🌍 Изменить общую мобильность", callback_data="edit_general_mobility")
+    builder.button(text="⭐ Мои подписки", callback_data="manage_my_subscriptions")
+    builder.adjust(1) # Каждая кнопка на новой строке
     return builder.as_markup()
 
 # --- КЛАВИАТУРЫ ДЛЯ ОНБОРДИНГА ---
@@ -37,6 +41,7 @@ def get_country_selection_keyboard(countries: list, lexicon) -> InlineKeyboardMa
         builder.button(text=country, callback_data=f"main_geo_settings:{country}")
     builder.adjust(2)
     return builder.as_markup()
+
 
 def get_main_geo_settings(lexicon)-> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -77,16 +82,63 @@ def get_back_to_city_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
 
 # --- НОВЫЕ И ПЕРЕРАБОТАННЫЕ КЛАВИАТУРЫ ДЛЯ ПОДПИСОК ---
 
-def get_my_subscriptions_keyboard(items: list) -> InlineKeyboardMarkup:
+def get_manage_subscriptions_keyboard(items: list) -> InlineKeyboardMarkup:
     """
-    Показывает список подписок для удаления и кнопку "Добавить/найти".
+    Показывает список подписок. Нажатие на подписку открывает ее для просмотра/редактирования.
+    НЕ содержит кнопки "Добавить".
     """
     builder = InlineKeyboardBuilder()
     if items:
         for item in items:
-            builder.button(text=f"❌ {item}", callback_data=f"unsubscribe:{item}")
+            # Используем callback 'view_subscription'
+            builder.button(text=f"⭐ {item}", callback_data=f"view_subscription:{item}")
         builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="➕ Добавить/найти исполнителя", callback_data="add_new_subscription"))
+    
+    # Кнопка "Назад" для возврата в главное меню профиля
+    builder.row(InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="back_to_profile"))
+    return builder.as_markup()
+
+def get_edit_country_keyboard(countries: list, lexicon) -> InlineKeyboardMarkup:
+    """Новая клавиатура для выбора страны в профиле."""
+    builder = InlineKeyboardBuilder()
+    for country in countries:
+        builder.button(text=country, callback_data=f"edit_country:{country}")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="back_to_profile"))
+    return builder.as_markup()
+
+def get_edit_city_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup:
+    """Новая клавиатура для выбора города в профиле."""
+    builder = InlineKeyboardBuilder()
+    for city in top_cities:
+        builder.button(text=city, callback_data=f"edit_city:{city}")
+    builder.adjust(2)
+    # Поиск города пока не будем реализовывать в этом флоу для простоты, можно добавить позже
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к выбору страны", callback_data="back_to_edit_country"))
+    return builder.as_markup()
+    
+def get_edit_event_type_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
+    """Новая клавиатура для выбора типов событий в профиле."""
+    if selected_types is None: selected_types = []
+    builder = InlineKeyboardBuilder()
+    for event_type in EVENT_TYPES_RU:
+        text = f"✅ {event_type}" if event_type in selected_types else f"⬜️ {event_type}"
+        builder.button(text=text, callback_data=f"edit_toggle_event_type:{event_type}")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="✅ Сохранить изменения", callback_data="finish_edit_preferences"))
+    return builder.as_markup()
+
+
+def get_single_subscription_manage_keyboard(item_name: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для управления одной конкретной подпиской.
+    """
+    builder = InlineKeyboardBuilder()
+    # Экранируем item_name, если он содержит символы, которые могут сломать callback
+    safe_item_name = item_name.replace(":", "") 
+    builder.button(text="✏️ Редактировать регионы", callback_data=f"edit_sub_regions:{safe_item_name}")
+    builder.button(text="🗑️ Удалить подписку", callback_data=f"delete_subscription:{safe_item_name}")
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="back_to_subscriptions_list"))
     return builder.as_markup()
 
 def get_general_onboarding_keyboard() -> InlineKeyboardMarkup:
@@ -99,19 +151,19 @@ def get_general_onboarding_keyboard() -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
-def get_region_selection_keyboard(all_countries: list, selected_regions: list, for_general: bool = False) -> InlineKeyboardMarkup:
+def get_region_selection_keyboard(all_countries: list, selected_regions: list, finish_callback: str) -> InlineKeyboardMarkup:
     """
     Универсальная клавиатура для выбора стран.
-    В зависимости от флага for_general меняет callback для кнопки "Готово".
+    Принимает finish_callback для кнопки 'Готово', чтобы работать в разных контекстах.
     """
     builder = InlineKeyboardBuilder()
     for country in all_countries:
         text = f"✅ {country}" if country in selected_regions else f"⬜️ {country}"
         builder.button(text=text, callback_data=f"toggle_region:{country}")
     builder.adjust(2)
-    finish_callback = "finish_general_selection" if for_general else "finish_custom_selection"
     builder.row(InlineKeyboardButton(text="✅ Готово", callback_data=finish_callback))
     return builder.as_markup()
+
 
 def get_add_sub_action_keyboard(show_setup_mobility_button: bool = False) -> InlineKeyboardMarkup:
     """

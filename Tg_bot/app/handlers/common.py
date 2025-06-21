@@ -90,15 +90,15 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     await start_onboarding_process(message, state, lexicon)
 
 
-@router.message(Command('settings'))
-@router.message(F.text.in_(['👤 Профиль', '👤 Profile', '👤 Профіль']))
-async def menu_profile(message: Message, state: FSMContext):
-    await state.clear()
-    lexicon = Lexicon(message.from_user.language_code)
-    await message.answer(
-        lexicon.get('profile_menu_header'),
-        reply_markup=kb.get_profile_keyboard(lexicon)
-    )
+# @router.message(Command('settings'))
+# @router.message(F.text.in_(['👤 Профиль', '👤 Profile', '👤 Профіль']))
+# async def menu_profile(message: Message, state: FSMContext):
+#     await state.clear()
+#     lexicon = Lexicon(message.from_user.language_code)
+#     await message.answer(
+#         lexicon.get('profile_menu_header'),
+#         reply_markup=kb.get_profile_keyboard(lexicon)
+#     )
 
 
 @router.callback_query(F.data == "change_location")

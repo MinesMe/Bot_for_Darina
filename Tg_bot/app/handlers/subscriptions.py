@@ -40,7 +40,7 @@ async def show_subscriptions_menu(message_or_cbq: Message | CallbackQuery):
     else:
         await message_or_cbq.answer(text, reply_markup=markup, parse_mode="HTML")
 
-@router.message(F.text.in_(['⭐ Мои подписки', '⭐ My Subscriptions', '⭐ Мае падпіскі']))
+@router.message(F.text.in_(['➕ Найти/добавить артиста', '➕ Find/Add Artist', '➕ Знайсці/дадаць выканаўцу'])) 
 async def menu_add_subscriptions(message: Message, state: FSMContext):
     """
     Точка входа в флоу ДОБАВЛЕНИЯ подписки.
@@ -121,7 +121,10 @@ async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMCo
         all_countries = await db.get_countries()
         await callback.message.edit_text(
             "Отлично! Выбери страны, которые войдут в твою 'общую мобильность'.",
-            reply_markup=kb.get_region_selection_keyboard(all_countries, [], for_general=True)
+            # --- ИЗМЕНЕНИЕ ЗДЕСЬ: передаем конкретный callback ---
+            reply_markup=kb.get_region_selection_keyboard(
+                all_countries, [], finish_callback="finish_general_selection"
+            )
         )
     else: # skip_general_mobility
         await state.set_state(SubscriptionFlow.waiting_for_action)
@@ -131,28 +134,26 @@ async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMCo
             reply_markup=kb.get_add_sub_action_keyboard()
         )
 
-
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "setup_general_mobility")
 async def handle_setup_general_mobility_again(callback: CallbackQuery, state: FSMContext):
     """
     Этот хэндлер срабатывает, когда пользователь нажимает 'Настроить общую мобильность'
     уже после прохождения первого онбординга.
     """
-    # Мы не вызываем set_general_geo_onboarding_completed, так как он уже пройден.
-    # Сразу переходим к выбору регионов.
     await state.set_state(SubscriptionFlow.selecting_general_regions)
     await state.update_data(selected_regions=[])
     all_countries = await db.get_countries()
     await callback.message.edit_text(
         "Отлично! Выбери страны, которые войдут в твою 'общую мобильность'.",
-        reply_markup=kb.get_region_selection_keyboard(all_countries, [], for_general=True)
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        reply_markup=kb.get_region_selection_keyboard(
+            all_countries, [], finish_callback="finish_general_selection"
+        )
     )
     await callback.answer()
 
-
 @router.callback_query(SubscriptionFlow.selecting_general_regions, F.data.startswith("toggle_region:"))
 async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора/снятия региона для общей мобильности."""
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
@@ -161,10 +162,10 @@ async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContex
     else:
         selected.append(region_name)
     await state.update_data(selected_regions=selected)
-
     all_countries = await db.get_countries()
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
     await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, for_general=True)
+        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, finish_callback="finish_general_selection")
     )
 
 @router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "finish_general_selection")
@@ -216,12 +217,9 @@ async def cq_cancel_artist_search(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("subscribe_to_artist:"))
 async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
-    """Выбор артиста из списка и переход к настройке мобильности для него."""
     artist_name = callback.data.split(":", 1)[1]
     await state.update_data(current_artist=artist_name)
-
     general_mobility = await db.get_general_mobility(callback.from_user.id)
-
     if general_mobility:
         await state.set_state(SubscriptionFlow.choosing_mobility_type)
         await callback.message.edit_text(
@@ -235,18 +233,17 @@ async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
         all_countries = await db.get_countries()
         await callback.message.edit_text(
             f"Артист: {hbold(artist_name)}. Укажите страны для отслеживания.",
-            reply_markup=kb.get_region_selection_keyboard(all_countries, []),
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            reply_markup=kb.get_region_selection_keyboard(all_countries, [], finish_callback="finish_custom_selection"),
             parse_mode="HTML"
         )
     await callback.answer()
 
 @router.callback_query(SubscriptionFlow.choosing_mobility_type, F.data.in_(['use_general_mobility', 'setup_custom_mobility']))
 async def handle_mobility_type_choice(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора: использовать общую мобильность или настроить кастомную."""
     data = await state.get_data()
     artist_name = data.get('current_artist')
     pending_subs = data.get('pending_subscriptions', [])
-
     if callback.data == 'use_general_mobility':
         regions = await db.get_general_mobility(callback.from_user.id)
         pending_subs.append({"item_name": artist_name, "category": "music", "regions": regions})
@@ -259,13 +256,13 @@ async def handle_mobility_type_choice(callback: CallbackQuery, state: FSMContext
         all_countries = await db.get_countries()
         await callback.message.edit_text(
             f"Артист: {hbold(artist_name)}. Укажите страны для отслеживания.",
-            reply_markup=kb.get_region_selection_keyboard(all_countries, []),
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            reply_markup=kb.get_region_selection_keyboard(all_countries, [], finish_callback="finish_custom_selection"),
             parse_mode="HTML"
         )
 
 @router.callback_query(SubscriptionFlow.selecting_custom_regions, F.data.startswith("toggle_region:"))
 async def cq_toggle_region_for_custom(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора/снятия региона для кастомной подписки."""
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
@@ -274,10 +271,10 @@ async def cq_toggle_region_for_custom(callback: CallbackQuery, state: FSMContext
     else:
         selected.append(region_name)
     await state.update_data(selected_regions=selected)
-
     all_countries = await db.get_countries()
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
     await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(all_countries, selected)
+        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, finish_callback="finish_custom_selection")
     )
 
 @router.callback_query(SubscriptionFlow.selecting_custom_regions, F.data == "finish_custom_selection")

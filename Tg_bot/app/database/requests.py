@@ -452,3 +452,31 @@ async def get_subscribers_for_event_title(event_title: str) -> list[int]:
         result = await session.execute(stmt)
         user_ids = result.scalars().all()
         return list(user_ids)
+    
+
+async def get_subscription_details(user_id: int, item_name: str) -> Subscription | None:
+    """Получает полную информацию о конкретной подписке пользователя."""
+    async with async_session() as session:
+        stmt = select(Subscription).where(
+            and_(
+                Subscription.user_id == user_id,
+                Subscription.item_name == item_name
+            )
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+async def update_subscription_regions(user_id: int, item_name: str, new_regions: list):
+    """Обновляет регионы для конкретной подписки."""
+    async with async_session() as session:
+        stmt = select(Subscription).where(
+            and_(
+                Subscription.user_id == user_id,
+                Subscription.item_name == item_name
+            )
+        )
+        result = await session.execute(stmt)
+        subscription = result.scalar_one_or_none()
+        if subscription:
+            subscription.regions = new_regions
+            await session.commit()

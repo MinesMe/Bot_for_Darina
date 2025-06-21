@@ -7,6 +7,7 @@ from .common import router as common_router
 from .onboarding import router as onboarding_router
 from .subscriptions import router as subscriptions_router
 from .afisha import router as afisha_router
+from .profile import router as profile_router
 
 # Импортируем вспомогательные функции, чтобы они были доступны из пакета
 # Например, для run_notifier.py
@@ -19,3 +20,4 @@ main_router.include_router(common_router)
 main_router.include_router(onboarding_router)
 main_router.include_router(subscriptions_router)
 main_router.include_router(afisha_router)
+main_router.include_router(profile_router)
