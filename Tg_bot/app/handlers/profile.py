@@ -18,6 +18,7 @@ router = Router()
 class EditMainGeoFSM(StatesGroup):
     choosing_country = State()
     choosing_city = State()
+    waiting_city_input = State()
     choosing_event_types = State()
 
 # FSM для управления подписками
@@ -51,7 +52,7 @@ async def cq_back_to_profile(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# --- Флоу редактирования ОСНОВНОГО ГЕО (полностью в этом файле) ---
+# --- Флоу редактирования ОСНОВНОГО ГЕО (с поиском города) ---
 @router.callback_query(F.data == "edit_main_geo")
 async def cq_edit_main_geo_start(callback: CallbackQuery, state: FSMContext):
     """Начинает флоу редактирования основного гео."""
@@ -83,6 +84,47 @@ async def cq_edit_country_selected(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
     await callback.answer()
+
+@router.callback_query(EditMainGeoFSM.choosing_city, F.data == "edit_search_for_city")
+async def cq_edit_search_for_city(callback: CallbackQuery, state: FSMContext):
+    """Начинает поиск города в режиме редактирования."""
+    await state.set_state(EditMainGeoFSM.waiting_city_input)
+    await state.update_data(msg_id_to_edit=callback.message.message_id)
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.message.edit_text(lexicon.get('search_city_prompt'))
+    await callback.answer()
+
+@router.message(EditMainGeoFSM.waiting_city_input, F.text)
+async def process_edit_city_search(message: Message, state: FSMContext):
+    """Обрабатывает введенный текст для поиска города."""
+    data = await state.get_data()
+    country_name = data.get("home_country")
+    msg_id_to_edit = data.get("msg_id_to_edit")
+    lexicon = Lexicon(message.from_user.language_code)
+    await message.delete()
+    if not msg_id_to_edit: return
+    
+    best_matches = await db.find_cities_fuzzy(country_name, message.text)
+    await state.set_state(EditMainGeoFSM.choosing_city)
+    
+    if not best_matches:
+        await message.bot.edit_message_text(
+            chat_id=message.chat.id, message_id=msg_id_to_edit,
+            text=lexicon.get('city_not_found'),
+            reply_markup=kb.get_back_to_city_selection_keyboard(lexicon)
+        )
+    else:
+        await message.bot.edit_message_text(
+            chat_id=message.chat.id, message_id=msg_id_to_edit,
+            text=lexicon.get('city_found_prompt'),
+            reply_markup=kb.get_edit_found_cities_keyboard(best_matches, lexicon)
+        )
+
+@router.callback_query(EditMainGeoFSM.choosing_city, F.data == "back_to_edit_city_list")
+async def cq_back_to_edit_city_list(callback: CallbackQuery, state: FSMContext):
+    """Возвращает к списку городов после поиска."""
+    # Просто вызываем хэндлер выбора страны, он перерисует меню городов
+    await cq_edit_country_selected(callback, state)
 
 @router.callback_query(EditMainGeoFSM.choosing_city, F.data.startswith("edit_city:"))
 async def cq_edit_city_selected(callback: CallbackQuery, state: FSMContext):
@@ -136,7 +178,6 @@ async def cq_edit_finish(callback: CallbackQuery, state: FSMContext):
 # --- Флоу редактирования ОБЩЕЙ МОБИЛЬНОСТИ ---
 @router.callback_query(F.data == "edit_general_mobility")
 async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
-    """Хэндлер для кнопки 'Изменить общую мобильность'."""
     await state.set_state(SubscriptionFlow.selecting_general_regions)
     current_regions = await db.get_general_mobility(callback.from_user.id) or []
     await state.update_data(selected_regions=current_regions)
@@ -151,7 +192,6 @@ async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "finish_general_edit_from_profile")
 async def cq_finish_general_edit_from_profile(callback: CallbackQuery, state: FSMContext):
-    """Завершает редактирование общей мобильности из профиля и возвращает в меню профиля."""
     data = await state.get_data()
     regions = data.get("selected_regions", [])
     if not regions:
@@ -164,7 +204,6 @@ async def cq_finish_general_edit_from_profile(callback: CallbackQuery, state: FS
 
 # --- Флоу управления ПОДПИСКАМИ ---
 async def show_subscriptions_list(callback: CallbackQuery, state: FSMContext):
-    """Вспомогательная функция для показа списка подписок."""
     await state.clear() 
     user_id = callback.from_user.id
     subs = await db.get_user_subscriptions(user_id)
@@ -177,17 +216,14 @@ async def show_subscriptions_list(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "manage_my_subscriptions")
 async def cq_manage_my_subscriptions(callback: CallbackQuery, state: FSMContext):
-    """Хэндлер для кнопки 'Мои подписки'."""
     await show_subscriptions_list(callback, state)
     
 @router.callback_query(F.data == "back_to_subscriptions_list")
 async def cq_back_to_subscriptions_list(callback: CallbackQuery, state: FSMContext):
-    """Возвращает к списку подписок."""
     await show_subscriptions_list(callback, state)
 
 @router.callback_query(F.data.startswith("view_subscription:"))
 async def cq_view_subscription(callback: CallbackQuery, state: FSMContext):
-    """Показывает информацию о конкретной подписке."""
     item_name = callback.data.split(":", 1)[1]
     sub_details = await db.get_subscription_details(callback.from_user.id, item_name)
     if not sub_details:
@@ -208,7 +244,6 @@ async def cq_view_subscription(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(ProfileFSM.viewing_subscription, F.data.startswith("delete_subscription:"))
 async def cq_delete_subscription(callback: CallbackQuery, state: FSMContext):
-    """Удаляет подписку."""
     item_name = callback.data.split(":", 1)[1]
     await db.remove_subscription(callback.from_user.id, item_name)
     await callback.answer(f"Подписка на {item_name} удалена.", show_alert=True)
@@ -216,7 +251,6 @@ async def cq_delete_subscription(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(ProfileFSM.viewing_subscription, F.data.startswith("edit_sub_regions:"))
 async def cq_edit_subscription_regions(callback: CallbackQuery, state: FSMContext):
-    """Переходит в режим редактирования регионов для подписки."""
     item_name = callback.data.split(":", 1)[1]
     await state.update_data(editing_item_name=item_name)
     current_sub = await db.get_subscription_details(callback.from_user.id, item_name)
@@ -233,7 +267,6 @@ async def cq_edit_subscription_regions(callback: CallbackQuery, state: FSMContex
 
 @router.callback_query(ProfileFSM.editing_subscription_regions, F.data.startswith("toggle_region:"))
 async def cq_toggle_region_for_edit(callback: CallbackQuery, state: FSMContext):
-    """Обрабатывает выбор/снятие региона в режиме редактирования."""
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
@@ -250,7 +283,6 @@ async def cq_toggle_region_for_edit(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(ProfileFSM.editing_subscription_regions, F.data == "finish_subscription_edit")
 async def cq_finish_subscription_edit(callback: CallbackQuery, state: FSMContext):
-    """Сохраняет измененные регионы и возвращает к списку подписок."""
     data = await state.get_data()
     new_regions = data.get("selected_regions", [])
     item_name = data.get("editing_item_name")

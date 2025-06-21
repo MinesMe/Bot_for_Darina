@@ -113,7 +113,8 @@ def get_edit_city_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup:
     for city in top_cities:
         builder.button(text=city, callback_data=f"edit_city:{city}")
     builder.adjust(2)
-    # Поиск города пока не будем реализовывать в этом флоу для простоты, можно добавить позже
+    # --- ДОБАВЛЕНА КНОПКА ПОИСКА С УНИКАЛЬНЫМ CALLBACK ---
+    builder.row(InlineKeyboardButton(text="🔎 Найти другой город", callback_data="edit_search_for_city"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад к выбору страны", callback_data="back_to_edit_country"))
     return builder.as_markup()
     
@@ -128,6 +129,14 @@ def get_edit_event_type_keyboard(lexicon, selected_types: list = None) -> Inline
     builder.row(InlineKeyboardButton(text="✅ Сохранить изменения", callback_data="finish_edit_preferences"))
     return builder.as_markup()
 
+def get_edit_found_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboardMarkup:
+    """Новая клавиатура для показа найденных городов в профиле."""
+    builder = InlineKeyboardBuilder()
+    for city in found_cities:
+        builder.button(text=city, callback_data=f"edit_city:{city}")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к выбору города", callback_data="back_to_edit_city_list"))
+    return builder.as_markup()
 
 def get_single_subscription_manage_keyboard(item_name: str) -> InlineKeyboardMarkup:
     """
