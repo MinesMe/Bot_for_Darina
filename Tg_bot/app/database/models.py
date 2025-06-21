@@ -122,15 +122,11 @@ class User(Base):
     # Флаг, который покажет, проходил ли пользователь онбординг мобильности
     main_geo_completed = Column(Boolean, default=False, nullable=False)
     general_geo_completed = Column(Boolean, default=False, nullable=False)
+    general_mobility_regions = Column(JSON, nullable=True)
 
 
 # --- НОВАЯ ТАБЛИЦА ДЛЯ ШАБЛОНОВ ---
-class MobilityTemplate(Base):
-    __tablename__ = 'mobility_templates'
-    template_id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False)
-    template_name = Column(String(100), nullable=False)
-    regions = Column(JSON, nullable=False) # Список стран/городов
+
 
 
 class Subscription(Base):
@@ -141,8 +137,7 @@ class Subscription(Base):
     category = Column(String(50), nullable=False)
     # --- НОВЫЕ ПОЛЯ ДЛЯ ГИБКОЙ МОБИЛЬНОСТИ ---
     # Либо ссылка на шаблон, либо кастомный список регионов
-    template_id = Column(Integer, ForeignKey('mobility_templates.template_id'), nullable=True)
-    custom_regions = Column(JSON, nullable=True)
+    regions = Column(JSON, nullable=True)
 
 
 SQL_CREATE_TRIGGER_FUNCTION = """

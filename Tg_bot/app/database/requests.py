@@ -6,11 +6,12 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
 from thefuzz import process as fuzzy_process, fuzz
 from datetime import datetime
 
-from .models import async_session, User, Subscription, Event, Artist, Venue, EventLink, EventType, EventArtist, Country, \
-    City, MobilityTemplate
+from .models import (
+    async_session, User, Subscription, Event, Artist, Venue, EventLink,
+    EventType, EventArtist, Country, City
+)
 
 SIMILARITY_THRESHOLD = 85
-
 
 # --- Функции для работы с пользователями и предпочтениями ---
 async def get_or_create_user(session, user_id: int, username: str = None, lang_code: str = 'en'):
@@ -47,7 +48,7 @@ async def get_user_preferences(user_id: int) -> dict | None:
         prefs = result.first()
         if prefs:
             return {
-                "home_country": prefs.home_country ,
+                "home_country": prefs.home_country,
                 "home_city": prefs.home_city,
                 "preferred_event_types": prefs.preferred_event_types
             }
@@ -55,78 +56,81 @@ async def get_user_preferences(user_id: int) -> dict | None:
 
 
 # --- ФУНКЦИИ ДЛЯ МОБИЛЬНОСТИ ---
+
 async def check_main_geo_status(user_id: int) -> bool:
+    """Проверяет, проходил ли пользователь ОСНОВНОЙ онбординг (для Афиши)."""
     async with async_session() as session:
         result = await session.execute(select(User.main_geo_completed).where(User.user_id == user_id))
         return result.scalar_one_or_none() or False
 
 
-async def set_main_geo_completed(user_id: int):
+async def check_general_geo_onboarding_status(user_id: int) -> bool:
+    """Проверяет, проходил ли пользователь онбординг ОБЩЕЙ мобильности (для Подписок)."""
+    async with async_session() as session:
+        result = await session.execute(select(User.general_geo_completed).where(User.user_id == user_id))
+        return result.scalar_one_or_none() or False
+
+
+async def set_general_geo_onboarding_completed(user_id: int):
+    """Отмечает, что пользователь прошел онбординг ОБЩЕЙ мобильности."""
     async with async_session() as session:
         user = await session.get(User, user_id)
         if user:
-            user.main_geo_completed = True
+            user.general_geo_completed = True
             await session.commit()
 
 
-async def get_user_mobility_templates(user_id: int) -> list[MobilityTemplate]:
+async def get_general_mobility(user_id: int) -> list | None:
+    """Получает список регионов из общей мобильности пользователя (из поля User.general_mobility_regions)."""
     async with async_session() as session:
-        result = await session.execute(
-            select(MobilityTemplate).where(MobilityTemplate.user_id == user_id).order_by(MobilityTemplate.template_name)
-        )
-        return result.scalars().all()
+        stmt = select(User.general_mobility_regions).where(User.user_id == user_id)
+        result = await session.execute(stmt)
+        regions_data = result.scalar_one_or_none()
+        return regions_data if regions_data else None
 
 
-async def create_mobility_template(user_id: int, template_name: str, regions: list):
+async def set_general_mobility(user_id: int, regions: list):
+    """Устанавливает или обновляет список регионов общей мобильности для пользователя."""
     async with async_session() as session:
-        new_template = MobilityTemplate(user_id=user_id, template_name=template_name, regions=regions)
-        session.add(new_template)
-        await session.commit()
-
-
-async def delete_mobility_template(template_id: int):
-    """Удаляет шаблон мобильности и отвязывает его от всех подписок."""
-    async with async_session() as session:
-        # Сначала отвязываем шаблон от всех подписок, которые его используют
-        # Это необязательно, если в модели стоит ondelete="SET NULL", но так надежнее
-        await session.execute(
-            select(Subscription)
-            .where(Subscription.template_id == template_id)
-        ).update({"template_id": None})
-
-        # Затем удаляем сам шаблон
-        await session.execute(
-            delete(MobilityTemplate).where(MobilityTemplate.template_id == template_id)
-        )
-        await session.commit()
+        user = await session.get(User, user_id)
+        if user:
+            user.general_mobility_regions = regions
+            await session.commit()
 
 
 # --- ФУНКЦИИ ДЛЯ ПОДПИСОК ---
 async def get_user_subscriptions(user_id: int) -> list:
+    """Получает список всех подписок пользователя."""
     async with async_session() as session:
         result = await session.execute(
-            select(Subscription.item_name).where(Subscription.user_id == user_id).order_by(Subscription.item_name))
+            select(Subscription.item_name)
+            .where(Subscription.user_id == user_id)
+            .order_by(Subscription.item_name)
+        )
         return result.scalars().all()
 
 
-async def add_subscription(user_id: int, item_name: str, category: str, template_id: int = None,
-                           custom_regions: list = None):
-    async with async_session() as session:
-        user_result = await session.execute(select(User).where(User.user_id == user_id))
-        if not user_result.scalar_one_or_none():
-            await get_or_create_user(session, user_id)
+async def add_subscriptions_bulk(user_id: int, subscriptions_data: list[dict]):
+    """
+    Массово добавляет подписки из списка словарей в одной транзакции.
+    Каждый словарь: {'item_name': '...', 'category': '...', 'regions': [...]}
+    """
+    if not subscriptions_data:
+        return
 
-        existing_sub = await session.execute(
-            select(Subscription).where(and_(Subscription.user_id == user_id, Subscription.item_name == item_name)))
-        if not existing_sub.scalar_one_or_none():
-            new_sub = Subscription(
-                user_id=user_id,
-                item_name=item_name,
-                category=category,
-                template_id=template_id,
-                custom_regions=custom_regions
-            )
-            session.add(new_sub)
+    async with async_session() as session:
+        # Получаем текущие подписки пользователя, чтобы не создавать дубликаты
+        current_subs_stmt = select(Subscription.item_name).where(Subscription.user_id == user_id)
+        current_subs_result = await session.execute(current_subs_stmt)
+        current_subs_set = set(current_subs_result.scalars().all())
+
+        new_subs_to_add = []
+        for sub_data in subscriptions_data:
+            if sub_data['item_name'] not in current_subs_set:
+                new_subs_to_add.append(Subscription(user_id=user_id, **sub_data))
+
+        if new_subs_to_add:
+            session.add_all(new_subs_to_add)
             await session.commit()
 
 
@@ -220,13 +224,53 @@ async def find_events_fuzzy(query: str, user_regions: list = None):
             search_query_lower = query.lower()
             for event in all_events:
                 title_score = fuzz.partial_ratio(search_query_lower, event.title.lower())
-                artist_scores = [fuzz.partial_ratio(search_query_lower, ea.artist.name.lower()) for ea in event.artists]
+                artist_scores = [fuzz.partial_ratio(search_query_lower, ea.artist.name.lower()) for ea in
+                                 event.artists]
                 max_score = max([title_score] + artist_scores) if artist_scores else title_score
                 if max_score >= SIMILARITY_THRESHOLD:
                     matches.append((event, max_score))
             matches.sort(key=lambda x: x[1], reverse=True)
             return [match[0] for match in matches]
         return events
+
+
+async def get_events_for_artists(artist_names: list[str], regions: list[str]) -> list[Event]:
+    """
+    Находит предстоящие события для заданного списка артистов в указанных регионах (странах или городах).
+    """
+    if not artist_names or not regions:
+        return []
+
+    async with async_session() as session:
+        today = datetime.now()
+        stmt = (
+            select(Event)
+            .join(Event.artists)
+            .join(EventArtist.artist)
+            .join(Event.venue)
+            .join(Venue.city)
+            .join(City.country)
+            .where(
+                and_(
+                    Artist.name.in_(artist_names),
+                    or_(
+                        City.name.in_(regions),
+                        Country.name.in_(regions)
+                    ),
+                    or_(
+                        Event.date_start >= today,
+                        Event.date_start.is_(None)
+                    )
+                )
+            )
+            .options(
+                selectinload(Event.venue).selectinload(Venue.city).selectinload(City.country),
+                selectinload(Event.links)
+            )
+            .distinct()
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()
 
 
 async def get_cities_for_category(category_name: str, user_regions: list):
@@ -306,13 +350,7 @@ async def get_subscribers_for_event(event: Event):
 
         subscribers_to_notify = []
         for sub in subs_on_artist:
-            regions_to_check = []
-            if sub.template_id:
-                template = await session.get(MobilityTemplate, sub.template_id)
-                if template:
-                    regions_to_check = template.regions
-            else:
-                regions_to_check = sub.custom_regions or []
+            regions_to_check = sub.regions or []
 
             event_country = event.venue.city.country.name
             event_city = event.venue.city.name
@@ -336,7 +374,6 @@ async def get_artists_by_lowercase_names(names: list[str]) -> list[str]:
         stmt = select(Artist.name).where(func.lower(Artist.name).in_(names))
         result = await session.execute(stmt)
         return result.scalars().all()
-    
 
 
 async def get_or_create(session, model, **kwargs):
@@ -349,7 +386,6 @@ async def get_or_create(session, model, **kwargs):
         session.add(instance)
         await session.flush()
         return instance
-    
 
 
 def extract_city_from_place(place_string: str) -> str:
@@ -370,19 +406,13 @@ def extract_city_from_place(place_string: str) -> str:
 async def add_unique_event(event):
     async with async_session() as session:
         try:
-
-            # 1. Работа с типом события
             event_type_obj = await get_or_create(session, EventType, name=event["event_type"])
-            
-            # 2. Извлечение города и работа с местом проведения
             city = extract_city_from_place(event['place'])
             venue = await get_or_create(session, Venue, name=event['place'], city_id=2,
                                         country_id=1)
 
-            # 3. Работа с артистом
             artist = await get_or_create(session, Artist, name=event['event_title'])
 
-            # 4. Обработка времени начала события
             start_datetime = None
             if event.get('timestamp'):
                 try:
@@ -390,29 +420,24 @@ async def add_unique_event(event):
                 except (ValueError, TypeError):
                     start_datetime = None
 
-            # 5. Подготовка данных для нового события
             new_event_data = {
                 "title": event['event_title'],
-                "description": event['time'], # Здесь используется "time" для описания, возможно, это опечатка?
+                "description": event['time'],
                 "type_id": event_type_obj.type_id,
                 "venue_id": venue.venue_id,
                 "date_start": start_datetime,
                 "price_min": event.get('price_min'),
                 "price_max": event.get('price_max')
             }
-            
-            # 6. Создание (или получение) самого события
+
             new_event = await get_or_create(session, Event, **new_event_data)
             
-            # 7. Связывание события с артистом
-            event_artist_link = {"event_id": new_event.event_id, "artist_id": artist.artist_id} # Используем event_id и artist_id
+            event_artist_link = {"event_id": new_event.event_id, "artist_id": artist.artist_id}
             await get_or_create(session, EventArtist, **event_artist_link)
             
-            # 8. Добавление ссылки на событие
-            event_url_link = {"event_id": new_event.event_id, "url": event['link'], "type": "bilety"} # Используем event_id
+            event_url_link = {"event_id": new_event.event_id, "url": event['link'], "type": "bilety"}
             await get_or_create(session, EventLink, **event_url_link)
 
-            # 9. Сохранение всех изменений
             await session.commit()
         except Exception as e:
             print("Ошибка при добавление ивента в бд: ")
@@ -420,16 +445,10 @@ async def add_unique_event(event):
 
 
 async def get_subscribers_for_event_title(event_title: str) -> list[int]:
-    async with async_session() as session: # Открываем асинхронную сессию
-        
+    async with async_session() as session:
         stmt = select(Subscription.user_id).where(
             Subscription.item_name == event_title
-        ).distinct() # Добавляем distinct() для уникальных ID
-
-        # Выполняем запрос
+        ).distinct()
         result = await session.execute(stmt)
-        
-        # Получаем все результаты. scalar_all() извлекает значения из первого столбца (user_id).
         user_ids = result.scalars().all()
-        
-        return list(user_ids) # Возвращаем список user_id
+        return list(user_ids)

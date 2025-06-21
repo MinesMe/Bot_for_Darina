@@ -4,132 +4,155 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
+from aiogram.utils.markdown import hbold
 
 from ..database import requests as db
-from ..database.models import async_session
 from .. import keyboards as kb
-from ..playlist_parser import parse_playlist_url
+from .common import format_events_for_response
 
 router = Router()
 
-
 class SubscriptionFlow(StatesGroup):
+    # Онбординг общей мобильности
+    general_mobility_onboarding = State()
+    selecting_general_regions = State()
+    # Основной флоу добавления
+    waiting_for_action = State()
     waiting_for_artist_name = State()
-    choosing_mobility_option = State()
-    choosing_template = State()
+    choosing_mobility_type = State()
     selecting_custom_regions = State()
-    creating_template_waiting_for_name = State()
-    creating_template_selecting_regions = State()
-    waiting_for_playlist_url = State()
-    selecting_from_playlist = State()
-    processing_imported_artist = State()
 
-
-async def show_subscriptions(message: Message | CallbackQuery, force_new_message: bool = False):
-    user_id = message.from_user.id
-    subscriptions = await db.get_user_subscriptions(user_id)
-    text = "Твои подписки:\nНажми на подписку, чтобы удалить ее." if subscriptions else "У тебя пока нет подписок."
-
-    markup = kb.manage_subscriptions_keyboard(subscriptions)
-
-    chat_id = message.chat.id if isinstance(message, Message) else message.message.chat.id
-
-    if isinstance(message, CallbackQuery) and not force_new_message:
-        try:
-            # Пытаемся отредактировать сообщение, из которого пришел колбэк
-            await message.message.edit_text(text, reply_markup=markup)
-            return
-        except Exception:
-            # Если не вышло (например, текст тот же), просто отвечаем на колбэк и отправляем новое сообщение
-            await message.answer()
-            await message.bot.send_message(chat_id, text, reply_markup=markup)
+async def show_subscriptions_menu(message_or_cbq: Message | CallbackQuery):
+    """Показывает текущие подписки пользователя с кнопкой 'Добавить'."""
+    user_id = message_or_cbq.from_user.id
+    subs = await db.get_user_subscriptions(user_id)
+    text = "Твои подписки:\n"
+    if subs:
+        for sub in subs:
+            text += f"▫️ {hbold(sub)}\n"
     else:
-        # Если это было сообщение, а не колбэк, просто отправляем новое
-        await message.bot.send_message(chat_id, text, reply_markup=markup)
+        text = "У тебя пока нет подписок."
 
+    markup = kb.get_my_subscriptions_keyboard(subs)
+
+    if isinstance(message_or_cbq, CallbackQuery):
+        await message_or_cbq.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await message_or_cbq.answer(text, reply_markup=markup, parse_mode="HTML")
 
 @router.message(F.text.in_(['⭐ Мои подписки', '⭐ My Subscriptions', '⭐ Мае падпіскі']))
-async def menu_my_subscriptions(message: Message, state: FSMContext):
+async def menu_add_subscriptions(message: Message, state: FSMContext):
+    """
+    Точка входа в флоу ДОБАВЛЕНИЯ подписки.
+    """
     await state.clear()
+    user_id = message.from_user.id
+    onboarding_done = await db.check_general_geo_onboarding_status(user_id)
 
-    async with async_session() as session:
-        await db.get_or_create_user(session, message.from_user.id, message.from_user.username,
-                                    message.from_user.language_code)
-
-    onboarding_done = await db.check_mobility_onboarding_status(message.from_user.id)
     if not onboarding_done:
+        # Случай 1: Пользователь здесь в самый первый раз.
+        await state.set_state(SubscriptionFlow.general_mobility_onboarding)
         await message.answer(
-            "Похоже, ты здесь впервые! Давай настроим твою 'мобильность' - страны, куда ты готов поехать ради событий. "
-            "Ты сможешь создать несколько шаблонов (например, 'Поездки по Европе' или 'Только соседи').",
-            reply_markup=kb.get_mobility_onboarding_keyboard()
+            "Для добавления артиста вам надо настроить страны, куда вы готовы полететь. "
+            "Это общая настройка, которую можно будет использовать для всех подписок. Вы можете пропустить этот шаг.",
+            reply_markup=kb.get_general_onboarding_keyboard()
         )
     else:
-        await show_subscriptions(message)
+        # Пользователь уже проходил онбординг.
+        general_mobility_regions = await db.get_general_mobility(user_id)
+        await state.set_state(SubscriptionFlow.waiting_for_action)
+        await state.update_data(pending_subscriptions=[])
 
+        if not general_mobility_regions:
+            # Случай 2: Онбординг пройден, но мобильность не настроена (пропущена).
+            # Показываем дополнительную кнопку.
+            await message.answer(
+                "Напиши исполнителя/событие для отслеживания. Также ты можешь сначала настроить общую мобильность.",
+                reply_markup=kb.get_add_sub_action_keyboard(show_setup_mobility_button=True)
+            )
+        else:
+            # Случай 3: Все настроено.
+            # Стандартный флоу без лишних кнопок.
+            await message.answer(
+                "Напиши исполнителя/событие для отслеживания. Также я могу импортировать их.",
+                reply_markup=kb.get_add_sub_action_keyboard(show_setup_mobility_button=False)
+            )
 
-# --- ИСПРАВЛЕНИЕ: ДОБАВЛЕН НЕДОСТАЮЩИЙ ХЕНДЛЕР ---
-@router.callback_query(F.data == "open_subscriptions")
-async def cq_open_subscriptions(callback: CallbackQuery, state: FSMContext):
-    """
-    Этот хендлер ловит нажатие на кнопку 'Мои подписки' из меню профиля.
-    """
+@router.callback_query(F.data == "show_my_subscriptions_from_profile")
+async def cq_show_my_subscriptions_from_profile(callback: CallbackQuery, state: FSMContext):
+    """Точка входа в раздел 'Мои подписки' из меню профиля."""
     await state.clear()
-
-    async with async_session() as session:
-        await db.get_or_create_user(session, callback.from_user.id, callback.from_user.username,
-                                    callback.from_user.language_code)
-
-    onboarding_done = await db.check_mobility_onboarding_status(callback.from_user.id)
-    # Удаляем предыдущее сообщение (меню профиля)
     await callback.message.delete()
+    await show_subscriptions_menu(callback.message)
+    await callback.answer()
+
+@router.callback_query(F.data == "add_new_subscription")
+async def start_subscription_add_flow(callback: CallbackQuery, state: FSMContext):
+    """Начало флоу добавления подписки."""
+    user_id = callback.from_user.id
+    onboarding_done = await db.check_general_geo_onboarding_status(user_id)
 
     if not onboarding_done:
-        await callback.message.answer(
-            "Похоже, ты здесь впервые! Давай настроим твою 'мобильность'...",
-            reply_markup=kb.get_mobility_onboarding_keyboard()
+        await state.set_state(SubscriptionFlow.general_mobility_onboarding)
+        await callback.message.edit_text(
+            "Для добавления артиста вам надо настроить страны, куда вы готовы полететь. "
+            "Это общая настройка, которую можно будет использовать для всех подписок. Вы можете пропустить этот шаг.",
+            reply_markup=kb.get_general_onboarding_keyboard()
         )
     else:
-        # Вызываем show_subscriptions с force_new_message=True, чтобы он гарантированно отправил новое сообщение
-        await show_subscriptions(callback, force_new_message=True)
-
+        await state.set_state(SubscriptionFlow.waiting_for_action)
+        await state.update_data(pending_subscriptions=[])
+        await callback.message.edit_text(
+            "Напиши исполнителя/событие для отслеживания. Также я могу импортировать их.",
+            reply_markup=kb.get_add_sub_action_keyboard()
+        )
     await callback.answer()
 
 
-@router.callback_query(F.data == "skip_mobility_setup")
-async def cq_skip_mobility_setup(callback: CallbackQuery, state: FSMContext):
-    await db.set_mobility_onboarding_completed(callback.from_user.id)
-    await callback.message.delete()
-    await show_subscriptions(callback, force_new_message=True)
+
+@router.callback_query(SubscriptionFlow.general_mobility_onboarding, F.data.in_(['setup_general_mobility', 'skip_general_mobility']))
+async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора в онбординге общей мобильности."""
+    await db.set_general_geo_onboarding_completed(callback.from_user.id)
+
+    if callback.data == 'setup_general_mobility':
+        await state.set_state(SubscriptionFlow.selecting_general_regions)
+        await state.update_data(selected_regions=[])
+        all_countries = await db.get_countries()
+        await callback.message.edit_text(
+            "Отлично! Выбери страны, которые войдут в твою 'общую мобильность'.",
+            reply_markup=kb.get_region_selection_keyboard(all_countries, [], for_general=True)
+        )
+    else: # skip_general_mobility
+        await state.set_state(SubscriptionFlow.waiting_for_action)
+        await state.update_data(pending_subscriptions=[])
+        await callback.message.edit_text(
+            "Хорошо. Теперь напиши исполнителя/событие для отслеживания или импортируй их.",
+            reply_markup=kb.get_add_sub_action_keyboard()
+        )
 
 
-@router.callback_query(F.data == "start_mobility_setup")
-async def cq_start_mobility_setup(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionFlow.creating_template_waiting_for_name)
-    await callback.message.edit_text(
-        "Отлично! Давай создадим твой первый шаблон. Как его назовем? (например, 'Основной')")
-
-
-@router.callback_query(F.data == "manage_mobility_templates")
-async def cq_manage_templates(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionFlow.creating_template_waiting_for_name)
-    await callback.message.edit_text("Давай создадим новый шаблон. Придумай для него название:")
-
-
-@router.message(SubscriptionFlow.creating_template_waiting_for_name, F.text)
-async def process_template_name(message: Message, state: FSMContext):
-    await state.update_data(template_name=message.text)
-    await state.set_state(SubscriptionFlow.creating_template_selecting_regions)
+@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "setup_general_mobility")
+async def handle_setup_general_mobility_again(callback: CallbackQuery, state: FSMContext):
+    """
+    Этот хэндлер срабатывает, когда пользователь нажимает 'Настроить общую мобильность'
+    уже после прохождения первого онбординга.
+    """
+    # Мы не вызываем set_general_geo_onboarding_completed, так как он уже пройден.
+    # Сразу переходим к выбору регионов.
+    await state.set_state(SubscriptionFlow.selecting_general_regions)
     await state.update_data(selected_regions=[])
-
     all_countries = await db.get_countries()
-    await message.answer(
-        f"Шаблон '{message.text}'. Теперь выбери страны, которые в него войдут:",
-        reply_markup=kb.get_region_selection_keyboard(all_countries, [], for_template=True)
+    await callback.message.edit_text(
+        "Отлично! Выбери страны, которые войдут в твою 'общую мобильность'.",
+        reply_markup=kb.get_region_selection_keyboard(all_countries, [], for_general=True)
     )
+    await callback.answer()
 
 
-@router.callback_query(SubscriptionFlow.creating_template_selecting_regions, F.data.startswith("toggle_region:"))
-async def cq_toggle_region_for_template(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(SubscriptionFlow.selecting_general_regions, F.data.startswith("toggle_region:"))
+async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора/снятия региона для общей мобильности."""
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
@@ -141,120 +164,108 @@ async def cq_toggle_region_for_template(callback: CallbackQuery, state: FSMConte
 
     all_countries = await db.get_countries()
     await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, for_template=True)
+        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, for_general=True)
     )
 
-
-@router.callback_query(SubscriptionFlow.creating_template_selecting_regions, F.data == "finish_template_creation")
-async def cq_finish_template_creation(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "finish_general_selection")
+async def cq_finish_general_selection(callback: CallbackQuery, state: FSMContext):
+    """Завершение настройки общей мобильности."""
     data = await state.get_data()
-    template_name = data.get("template_name")
     regions = data.get("selected_regions", [])
 
     if not regions:
         await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
         return
 
-    await db.create_mobility_template(callback.from_user.id, template_name, regions)
-    await db.set_mobility_onboarding_completed(callback.from_user.id)
-    await state.clear()
+    await db.set_general_mobility(callback.from_user.id, regions)
+    await callback.answer("✅ Общие настройки мобильности сохранены!", show_alert=True)
+    
+    await state.set_state(SubscriptionFlow.waiting_for_action)
+    await state.update_data(pending_subscriptions=[])
+    await callback.message.edit_text(
+        "Отлично! Теперь напиши исполнителя/событие или импортируй их.",
+        reply_markup=kb.get_add_sub_action_keyboard()
+    )
 
-    await callback.message.edit_text(f"✅ Шаблон '{template_name}' успешно создан!")
-    await show_subscriptions(callback, force_new_message=True)
-
-
-@router.callback_query(F.data == "add_subscription_manual")
-async def cq_add_subscription_manual(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "write_artist")
+async def handle_write_artist(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SubscriptionFlow.waiting_for_artist_name)
     await callback.message.edit_text("Введите имя артиста или название группы:")
     await callback.answer()
 
+@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "import_artists")
+async def handle_import_artists(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("Функция импорта находится в разработке.", show_alert=True)
 
 @router.message(SubscriptionFlow.waiting_for_artist_name, F.text)
 async def process_artist_search(message: Message, state: FSMContext):
+    """Поиск артиста по имени."""
     found_artists = await db.find_artists_fuzzy(message.text)
     if not found_artists:
-        await message.answer("По твоему запросу никого не найдено. Попробуй еще раз.",
-                             reply_markup=kb.found_artists_keyboard([]))
+        await message.answer("По твоему запросу никого не найдено. Попробуй еще раз.")
     else:
         await message.answer("Вот кого я нашел. Выбери нужного артиста:",
                              reply_markup=kb.found_artists_keyboard(found_artists))
 
+@router.callback_query(F.data == "cancel_artist_search")
+async def cq_cancel_artist_search(callback: CallbackQuery, state: FSMContext):
+    """Отмена поиска артиста и возврат в меню подписок."""
+    await state.clear()
+    await callback.message.delete()
+    await show_subscriptions_menu(callback.message)
 
 @router.callback_query(F.data.startswith("subscribe_to_artist:"))
 async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
+    """Выбор артиста из списка и переход к настройке мобильности для него."""
     artist_name = callback.data.split(":", 1)[1]
-    await state.update_data(artist_to_subscribe=artist_name)
-    await process_mobility_choice(callback, state)  # Передаем callback, а не message
+    await state.update_data(current_artist=artist_name)
 
+    general_mobility = await db.get_general_mobility(callback.from_user.id)
 
-async def process_mobility_choice(callback_or_message: Message | CallbackQuery, state: FSMContext):
-    message = callback_or_message if isinstance(callback_or_message, Message) else callback_or_message.message
-    user_id = callback_or_message.from_user.id
-
-    templates = await db.get_user_mobility_templates(user_id)
-    data = await state.get_data()
-    artist_name = data.get("artist_to_subscribe")
-
-    if not templates:
+    if general_mobility:
+        await state.set_state(SubscriptionFlow.choosing_mobility_type)
+        await callback.message.edit_text(
+            f"Артист: {hbold(artist_name)}. Хотите добавить страны для отслеживания конкретно для этой подписки или использовать общие настройки?",
+            reply_markup=kb.get_mobility_type_choice_keyboard(),
+            parse_mode="HTML"
+        )
+    else:
         await state.set_state(SubscriptionFlow.selecting_custom_regions)
         await state.update_data(selected_regions=[])
         all_countries = await db.get_countries()
-        await message.edit_text(
-            f"Артист: {artist_name}.\nУ тебя пока нет шаблонов мобильности. Давай настроим регионы для этой подписки вручную.",
-            reply_markup=kb.get_region_selection_keyboard(all_countries, [])
+        await callback.message.edit_text(
+            f"Артист: {hbold(artist_name)}. Укажите страны для отслеживания.",
+            reply_markup=kb.get_region_selection_keyboard(all_countries, []),
+            parse_mode="HTML"
         )
-    else:
-        await state.set_state(SubscriptionFlow.choosing_mobility_option)
-        await message.edit_text(
-            f"Артист: {artist_name}.\nКак настроим регионы для уведомлений?",
-            reply_markup=kb.get_mobility_choice_keyboard(templates)
-        )
+    await callback.answer()
 
-
-@router.callback_query(SubscriptionFlow.choosing_mobility_option, F.data == "choose_template")
-async def cq_choose_template(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionFlow.choosing_template)
-    templates = await db.get_user_mobility_templates(callback.from_user.id)
-    await callback.message.edit_text(
-        "Выбери один из своих шаблонов:",
-        reply_markup=kb.get_template_selection_keyboard(templates)
-    )
-
-
-@router.callback_query(SubscriptionFlow.choosing_mobility_option, F.data == "setup_custom_regions")
-async def cq_setup_custom_regions(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionFlow.selecting_custom_regions)
-    await state.update_data(selected_regions=[])
-    all_countries = await db.get_countries()
-    await callback.message.edit_text(
-        "Выбери страны, для которых будет действовать эта подписка:",
-        reply_markup=kb.get_region_selection_keyboard(all_countries, [])
-    )
-
-
-@router.callback_query(SubscriptionFlow.choosing_mobility_option, F.data == "back_to_mobility_choice")
-async def cq_back_to_mobility_choice(callback: CallbackQuery, state: FSMContext):
-    await process_mobility_choice(callback, state)
-
-
-@router.callback_query(SubscriptionFlow.choosing_template, F.data.startswith("select_template:"))
-async def cq_select_template_for_sub(callback: CallbackQuery, state: FSMContext):
-    template_id = int(callback.data.split(":")[1])
+@router.callback_query(SubscriptionFlow.choosing_mobility_type, F.data.in_(['use_general_mobility', 'setup_custom_mobility']))
+async def handle_mobility_type_choice(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора: использовать общую мобильность или настроить кастомную."""
     data = await state.get_data()
-    artist_name = data.get("artist_to_subscribe")
+    artist_name = data.get('current_artist')
+    pending_subs = data.get('pending_subscriptions', [])
 
-    await db.add_subscription(
-        user_id=callback.from_user.id, item_name=artist_name,
-        category='music', template_id=template_id
-    )
-
-    await callback.message.edit_text(f"✅ Подписка на '{artist_name}' с использованием шаблона оформлена!")
-    await process_next_imported_artist(callback, state)
-
+    if callback.data == 'use_general_mobility':
+        regions = await db.get_general_mobility(callback.from_user.id)
+        pending_subs.append({"item_name": artist_name, "category": "music", "regions": regions})
+        await state.update_data(pending_subscriptions=pending_subs)
+        await callback.answer(f"Артист {artist_name} добавлен с общими настройками.", show_alert=True)
+        await show_add_more_or_finish(callback.message, state)
+    else:
+        await state.set_state(SubscriptionFlow.selecting_custom_regions)
+        await state.update_data(selected_regions=[])
+        all_countries = await db.get_countries()
+        await callback.message.edit_text(
+            f"Артист: {hbold(artist_name)}. Укажите страны для отслеживания.",
+            reply_markup=kb.get_region_selection_keyboard(all_countries, []),
+            parse_mode="HTML"
+        )
 
 @router.callback_query(SubscriptionFlow.selecting_custom_regions, F.data.startswith("toggle_region:"))
-async def cq_toggle_region_for_sub(callback: CallbackQuery, state: FSMContext):
+async def cq_toggle_region_for_custom(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора/снятия региона для кастомной подписки."""
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
@@ -269,140 +280,80 @@ async def cq_toggle_region_for_sub(callback: CallbackQuery, state: FSMContext):
         reply_markup=kb.get_region_selection_keyboard(all_countries, selected)
     )
 
-
-@router.callback_query(SubscriptionFlow.selecting_custom_regions, F.data == "finish_custom_region_selection")
-async def cq_finish_custom_regions(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(SubscriptionFlow.selecting_custom_regions, F.data == "finish_custom_selection")
+async def cq_finish_custom_selection(callback: CallbackQuery, state: FSMContext):
+    """Завершение настройки кастомных регионов для подписки."""
     data = await state.get_data()
-    artist_name = data.get("artist_to_subscribe")
     regions = data.get("selected_regions", [])
+    artist_name = data.get('current_artist')
+    pending_subs = data.get('pending_subscriptions', [])
 
     if not regions:
         await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
         return
+    
+    pending_subs.append({"item_name": artist_name, "category": "music", "regions": regions})
+    await state.update_data(pending_subscriptions=pending_subs)
+    await callback.answer(f"Артист {artist_name} добавлен с кастомными настройками.", show_alert=True)
 
-    await db.add_subscription(
-        user_id=callback.from_user.id, item_name=artist_name,
-        category='music', custom_regions=regions
-    )
+    await show_add_more_or_finish(callback.message, state)
 
-    await callback.message.edit_text(f"✅ Подписка на '{artist_name}' с кастомными регионами оформлена!")
-    await process_next_imported_artist(callback, state)
+async def show_add_more_or_finish(message: Message, state: FSMContext):
+    """Показывает клавиатуру 'Добавить еще' / 'Готово'."""
+    data = await state.get_data()
+    pending_subs = data.get('pending_subscriptions', [])
+    text = "Подписка добавлена в очередь на сохранение.\n"
+    if pending_subs:
+        text += "\n<b>Очередь на добавление:</b>\n"
+        for sub in pending_subs:
+            text += f"▫️ {hbold(sub['item_name'])}\n"
+    
+    await state.set_state(SubscriptionFlow.waiting_for_action)
+    await message.edit_text(text, reply_markup=kb.get_add_more_or_finish_keyboard(), parse_mode="HTML")
 
+@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "finish_adding_subscriptions")
+async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext):
+    """Завершает сессию, сохраняет все подписки и показывает результат."""
+    data = await state.get_data()
+    pending_subs = data.get('pending_subscriptions', [])
 
-@router.callback_query(F.data == "import_playlist")
-async def cq_import_playlist(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionFlow.waiting_for_playlist_url)
-    await callback.message.edit_text(
-        "Отправь мне ссылку на публичный плейлист (YouTube Music, Spotify, Яндекс.Музыка, VK). "
-        "Я извлеку оттуда исполнителей, и ты сможешь подписаться на них."
-    )
-    await callback.answer()
-
-
-@router.message(SubscriptionFlow.waiting_for_playlist_url, F.text)
-async def process_playlist_url(message: Message, state: FSMContext):
-    if not message.text.startswith('http'):
-        await message.reply("Это не похоже на ссылку. Попробуй еще раз.")
+    if not pending_subs:
+        await callback.answer("Вы ничего не добавили в очередь.", show_alert=True)
         return
 
-    msg = await message.reply("Принял ссылку. Начинаю обработку...")
+    await db.add_subscriptions_bulk(callback.from_user.id, pending_subs)
+    await state.clear()
 
-    found_artists_lower = await parse_playlist_url(message.text)
-    if found_artists_lower is None or not found_artists_lower:
-        await msg.edit_text(
-            "Не удалось обработать ссылку или найти артистов. Убедись, что плейлист публичный и ссылка верна.")
-        await state.clear()
-        return
+    final_text = "✅ Ваши подписки успешно сохранены:\n"
+    artist_names = []
+    all_regions = set()
+    for sub in pending_subs:
+        final_text += f"▫️ {hbold(sub['item_name'])}\n"
+        artist_names.append(sub['item_name'])
+        for region in sub['regions']:
+            all_regions.add(region)
 
-    correctly_cased_artists = await db.get_artists_by_lowercase_names(found_artists_lower)
-    sorted_artists = sorted(list(set(correctly_cased_artists)))
+    final_text += "\nИщу для вас актуальные события..."
+    await callback.message.edit_text(final_text, parse_mode="HTML")
 
-    await state.set_state(SubscriptionFlow.selecting_from_playlist)
-    await state.update_data(found_artists=sorted_artists, selected_artists_for_import=set())
-    await msg.edit_text(
-        "Я нашел этих артистов в плейлисте. Выбери, на кого хочешь подписаться:",
-        reply_markup=kb.get_paginated_artists_keyboard(sorted_artists, set())
-    )
-
-
-@router.callback_query(SubscriptionFlow.selecting_from_playlist, F.data.startswith("toggle_artist_subscribe:"))
-async def cq_toggle_artist_subscribe(callback: CallbackQuery, state: FSMContext):
-    artist_name = callback.data.split(":", 1)[1]
-    data = await state.get_data()
-    found = data.get("found_artists", [])
-    selected = data.get("selected_artists_for_import", set())
-    if artist_name in selected:
-        selected.remove(artist_name)
-    else:
-        selected.add(artist_name)
-    await state.update_data(selected_artists_for_import=selected)
-
-    current_page = 0
-    if found:
-        try:
-            current_page = found.index(artist_name) // 5
-        except ValueError:
-            pass
-
-    await callback.message.edit_reply_markup(
-        reply_markup=kb.get_paginated_artists_keyboard(found, selected, current_page)
-    )
-
-
-@router.callback_query(SubscriptionFlow.selecting_from_playlist, F.data.startswith("paginate_artists:"))
-async def cq_paginate_artists(callback: CallbackQuery, state: FSMContext):
-    page = int(callback.data.split(":")[1])
-    data = await state.get_data()
-    await callback.message.edit_reply_markup(
-        reply_markup=kb.get_paginated_artists_keyboard(
-            data.get("found_artists", []),
-            data.get("selected_artists_for_import", set()),
-            page
+    found_events = await db.get_events_for_artists(artist_names, list(all_regions))
+    if found_events:
+        events_text = await format_events_for_response(found_events)
+        await callback.message.answer(
+            "🔥 Вот что я нашел по вашим новым подпискам:",
+            disable_web_page_preview=True
         )
-    )
-
-
-@router.callback_query(SubscriptionFlow.selecting_from_playlist, F.data == "finish_artist_selection")
-async def cq_finish_artist_selection(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    selected_artists = list(data.get("selected_artists_for_import", set()))
-
-    if not selected_artists:
-        await callback.answer("Ты никого не выбрал.", show_alert=True)
-        return
-
-    await state.update_data(imported_artists_queue=selected_artists)
-    await callback.message.delete()
-    await process_next_imported_artist(callback, state)
-
-
-async def process_next_imported_artist(callback_or_message: Message | CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    artist_queue = data.get("imported_artists_queue", [])
-
-    if not artist_queue:
-        await state.clear()
-        message = callback_or_message if isinstance(callback_or_message, Message) else callback_or_message.message
-        await message.answer("✅ Все выбранные подписки успешно оформлены!")
-        await show_subscriptions(callback_or_message, force_new_message=True)
-        return
-
-    current_artist = artist_queue.pop(0)
-    await state.update_data(imported_artists_queue=artist_queue)
-    await state.update_data(artist_to_subscribe=current_artist)
-
-    await process_mobility_choice(callback_or_message, state)
+        await callback.message.answer(events_text, parse_mode="HTML", disable_web_page_preview=True)
+    else:
+        await callback.message.answer("😔 Пока что для ваших новых подписок актуальных событий не найдено.")
+    
+    await callback.message.answer("Вы всегда можете изменить настройки каждой подписки в профиле.")
 
 
 @router.callback_query(F.data.startswith("unsubscribe:"))
-async def cq_unsubscribe_item(callback: CallbackQuery):
+async def cq_unsubscribe_item(callback: CallbackQuery, state: FSMContext):
+    """Удаление подписки из меню."""
     item_name = callback.data.split(":", 1)[1]
     await db.remove_subscription(callback.from_user.id, item_name)
-    await callback.answer(f"❌ Ты отписался от {item_name}.")
-    await show_subscriptions(callback)
-
-
-@router.callback_query(F.data == "cancel_subscription")
-async def cq_cancel_subscription(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await show_subscriptions(callback)
+    await callback.answer(f"❌ Вы отписались от {item_name}.")
+    await show_subscriptions_menu(callback)

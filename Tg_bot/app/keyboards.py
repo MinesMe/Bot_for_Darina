@@ -2,7 +2,6 @@
 
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-from .database.models import MobilityTemplate
 
 # --- КОНСТАНТЫ ---
 EVENT_TYPES_RU = ["Концерт", "Театр", "Спорт", "Цирк", "Выставка", "Фестиваль"]
@@ -27,7 +26,7 @@ def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
 def get_profile_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=lexicon.get('profile_button_location'), callback_data="change_location")
-    builder.button(text=lexicon.get('profile_button_subs'), callback_data="open_subscriptions")
+    builder.button(text=lexicon.get('profile_button_subs'), callback_data="show_my_subscriptions_from_profile")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -61,7 +60,6 @@ def get_found_home_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboar
     builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data="back_to_city_selection"))
     return builder.as_markup()
 
-
 def get_event_type_selection_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
     if selected_types is None: selected_types = []
     builder = InlineKeyboardBuilder()
@@ -77,77 +75,92 @@ def get_back_to_city_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder.button(text=lexicon.get('back_button'), callback_data="back_to_city_selection")
     return builder.as_markup()
 
-# --- КЛАВИАТУРЫ ДЛЯ МОБИЛЬНОСТИ И ПОДПИСОК ---
-def get_mobility_onboarding_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="👍 Да, настроить", callback_data="start_mobility_setup")
-    builder.button(text="➡️ Пропустить", callback_data="skip_mobility_setup")
-    return builder.as_markup()
+# --- НОВЫЕ И ПЕРЕРАБОТАННЫЕ КЛАВИАТУРЫ ДЛЯ ПОДПИСОК ---
 
-def get_region_selection_keyboard(all_countries: list, selected_regions: list, for_template: bool = False) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for country in all_countries:
-        text = f"✅ {country}" if country in selected_regions else f"⬜️ {country}"
-        callback_data = f"toggle_region:{country}"
-        builder.button(text=text, callback_data=callback_data)
-    builder.adjust(2)
-    finish_callback = "finish_template_creation" if for_template else "finish_custom_region_selection"
-    builder.row(InlineKeyboardButton(text="✅ Готово", callback_data=finish_callback))
-    return builder.as_markup()
-
-def get_mobility_choice_keyboard(templates: list[MobilityTemplate]) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    if templates:
-        builder.button(text="📝 Использовать шаблон", callback_data="choose_template")
-    builder.button(text="⚙️ Настроить регионы вручную", callback_data="setup_custom_regions")
-    builder.adjust(1)
-    return builder.as_markup()
-
-def get_template_selection_keyboard(templates: list[MobilityTemplate]) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for template in templates:
-        builder.button(text=f"📄 {template.template_name}", callback_data=f"select_template:{template.template_id}")
-    builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_mobility_choice"))
-    return builder.as_markup()
-
-def manage_subscriptions_keyboard(items: list) -> InlineKeyboardMarkup:
+def get_my_subscriptions_keyboard(items: list) -> InlineKeyboardMarkup:
+    """
+    Показывает список подписок для удаления и кнопку "Добавить/найти".
+    """
     builder = InlineKeyboardBuilder()
     if items:
         for item in items:
             builder.button(text=f"❌ {item}", callback_data=f"unsubscribe:{item}")
         builder.adjust(1)
-    builder.row(
-        InlineKeyboardButton(text="➕ Добавить подписку", callback_data="add_subscription_manual"),
-        InlineKeyboardButton(text="📥 Импорт из плейлиста", callback_data="import_playlist")
-    )
-    builder.row(InlineKeyboardButton(text="🗺️ Управление шаблонами мобильности", callback_data="manage_mobility_templates"))
+    builder.row(InlineKeyboardButton(text="➕ Добавить/найти исполнителя", callback_data="add_new_subscription"))
     return builder.as_markup()
 
-# --- НОВЫЕ КЛАВИАТУРЫ ДЛЯ УПРАВЛЕНИЯ ШАБЛОНАМИ ---
-def get_templates_management_keyboard(templates: list[MobilityTemplate]) -> InlineKeyboardMarkup:
+def get_general_onboarding_keyboard() -> InlineKeyboardMarkup:
+    """
+    Предлагает настроить или пропустить настройку общей мобильности.
+    """
     builder = InlineKeyboardBuilder()
-    if templates:
-        builder.button(text="🗑️ Удалить шаблон", callback_data="delete_template_start")
-    builder.button(text="➕ Создать новый шаблон", callback_data="create_template_start")
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к подпискам", callback_data="back_to_subscriptions"))
-    return builder.as_markup()
-
-def get_template_deletion_keyboard(templates: list[MobilityTemplate]) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for template in templates:
-        builder.button(text=f"❌ {template.template_name}", callback_data=f"delete_template_confirm:{template.template_id}")
+    builder.button(text="👍 Да, настроить", callback_data="setup_general_mobility")
+    builder.button(text="➡️ Пропустить", callback_data="skip_general_mobility")
     builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_mobility_templates"))
     return builder.as_markup()
+
+def get_region_selection_keyboard(all_countries: list, selected_regions: list, for_general: bool = False) -> InlineKeyboardMarkup:
+    """
+    Универсальная клавиатура для выбора стран.
+    В зависимости от флага for_general меняет callback для кнопки "Готово".
+    """
+    builder = InlineKeyboardBuilder()
+    for country in all_countries:
+        text = f"✅ {country}" if country in selected_regions else f"⬜️ {country}"
+        builder.button(text=text, callback_data=f"toggle_region:{country}")
+    builder.adjust(2)
+    finish_callback = "finish_general_selection" if for_general else "finish_custom_selection"
+    builder.row(InlineKeyboardButton(text="✅ Готово", callback_data=finish_callback))
+    return builder.as_markup()
+
+def get_add_sub_action_keyboard(show_setup_mobility_button: bool = False) -> InlineKeyboardMarkup:
+    """
+    Предлагает выбор: написать имя артиста вручную или импортировать.
+    Может также включать кнопку настройки общей мобильности.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✍️ Написать артиста", callback_data="write_artist")
+    builder.button(text="📥 Импортировать", callback_data="import_artists")
+    builder.adjust(1)
+    if show_setup_mobility_button:
+        builder.row(InlineKeyboardButton(text="🛠️ Настроить общую мобильность", callback_data="setup_general_mobility"))
+    return builder.as_markup()
+
+
+def get_mobility_type_choice_keyboard() -> InlineKeyboardMarkup:
+    """
+    Предлагает использовать общие настройки мобильности или настроить для текущей подписки.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🌍 Использовать общие", callback_data="use_general_mobility")
+    builder.button(text="⚙️ Настроить для этой подписки", callback_data="setup_custom_mobility")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_add_more_or_finish_keyboard(show_setup_mobility_button: bool = False) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для цикла добавления подписок.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✍️ Добавить еще артиста", callback_data="write_artist")
+    builder.button(text="📥 Импортировать еще", callback_data="import_artists")
+    if show_setup_mobility_button:
+         builder.row(InlineKeyboardButton(text="🛠️ Настроить общую мобильность", callback_data="setup_general_mobility"))
+    builder.row(InlineKeyboardButton(text="✅ Готово", callback_data="finish_adding_subscriptions"))
+    return builder.as_markup()
+
 
 # --- ОСТАЛЬНЫЕ КЛАВИАТУРЫ ---
+
 def found_artists_keyboard(artists: list) -> InlineKeyboardMarkup:
+    """
+    Показывает найденных артистов для подписки.
+    """
     builder = InlineKeyboardBuilder()
     for artist in artists:
-        builder.button(text=f"✅ {artist}", callback_data=f"subscribe_to_artist:{artist}")
+        builder.button(text=f"{artist}", callback_data=f"subscribe_to_artist:{artist}")
     builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="Отмена", callback_data="cancel_subscription"))
+    builder.row(InlineKeyboardButton(text="Отмена", callback_data="cancel_artist_search"))
     return builder.as_markup()
 
 def get_paginated_artists_keyboard(all_artists: list, selected_artists: set, page: int = 0) -> InlineKeyboardMarkup:
