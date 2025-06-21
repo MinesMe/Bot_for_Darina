@@ -45,18 +45,6 @@ async def populate_artists_if_needed(session):
     except Exception as e:
         print(f"Произошла ошибка при заполнении таблицы артистов: {e}")
 
-
-async def clear_event_data(session):
-    print("Очистка старых данных о событиях...")
-    await session.execute(delete(EventArtist))
-    await session.execute(delete(EventLink))
-    await session.execute(delete(Event))
-    await session.execute(delete(Venue))
-    await session.commit()
-    print("Старые данные о событиях удалены.")
-
-
-
 async def process_all_sites():
     tables_exist = await check_tables_exist()
     if not tables_exist:

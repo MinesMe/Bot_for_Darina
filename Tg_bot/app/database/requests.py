@@ -161,6 +161,11 @@ async def get_countries(home_country_selection: bool = False):
 
 
 async def get_top_cities_for_country(country_name: str, limit: int = 6):
+    if country_name == "Беларусь":
+        # Если запросили Беларусь, возвращаем заранее определенный список
+        return ["Минск", "Брест", "Витебск", "Гомель", "Гродно", "Могилев"]
+
+    # --- СТАРАЯ ЛОГИКА ДЛЯ ВСЕХ ОСТАЛЬНЫХ СТРАН ---
     async with async_session() as session:
         result = await session.execute(
             select(City.name)
@@ -403,15 +408,52 @@ def extract_city_from_place(place_string: str) -> str:
             return city
     return "Минск"
 
+async def get_or_create_city_and_country(session, city_name: str, default_country_id: int = 1):
+    """
+    Ищет город по имени. Если находит, возвращает его и страну.
+    Если не находит, создает новый город в стране по умолчанию.
+    """
+    # Ищем город и сразу подгружаем связанную страну, чтобы избежать лишних запросов
+    stmt = select(City).options(selectinload(City.country)).where(City.name == city_name)
+    result = await session.execute(stmt)
+    city_obj = result.scalar_one_or_none()
+
+    if city_obj:
+        # Город найден, возвращаем его и его страну
+        return city_obj, city_obj.country
+
+    # Город не найден, нужно его создать
+    # Сначала убедимся, что страна по умолчанию существует
+    default_country_obj = await session.get(Country, default_country_id)
+    if not default_country_obj:
+        # Критическая ситуация: в базе нет даже страны по умолчанию.
+        # Можно либо выбросить ошибку, либо создать и ее. Пока выбросим ошибку.
+        raise ValueError(f"Страна по умолчанию с ID {default_country_id} не найдена в базе данных.")
+
+    # Создаем новый город
+    new_city = City(name=city_name, country_id=default_country_id)
+    session.add(new_city)
+    await session.flush() # Применяем изменения, чтобы получить city_id
+    
+    print(f"Добавлен новый город: {city_name} в страну {default_country_obj.name}")
+    
+    # Возвращаем новый город и его страну
+    return new_city, default_country_obj
+
 async def add_unique_event(event):
     async with async_session() as session:
         try:
             event_type_obj = await get_or_create(session, EventType, name=event["event_type"])
-            city = extract_city_from_place(event['place'])
-            venue = await get_or_create(session, Venue, name=event['place'], city_id=2,
-                                        country_id=1)
-
+             # 2. Извлечение города и работа с местом проведения (НОВАЯ ЛОГИКА)
+            city_name_from_parser = extract_city_from_place(event['place'])
+            
+            # Получаем или создаем город и страну с помощью новой функции
+            city_obj, country_obj = await get_or_create_city_and_country(session, city_name_from_parser)
             artist = await get_or_create(session, Artist, name=event['event_title'])
+            venue = await get_or_create(session, Venue, 
+                                        name=event['place'], 
+                                        city_id=city_obj.city_id,
+                                        country_id=country_obj.country_id)
 
             start_datetime = None
             if event.get('timestamp'):
