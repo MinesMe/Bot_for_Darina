@@ -393,21 +393,6 @@ async def get_or_create(session, model, **kwargs):
         return instance
 
 
-def extract_city_from_place(place_string: str) -> str:
-    if not place_string:
-        return "Минск"
-    parts = place_string.split(',')
-    if len(parts) > 1:
-        city = parts[-1].strip()
-        if not any(char.isdigit() for char in city):
-            return city
-    known_cities = ["Минск", "Брест", "Витебск", "Гомель", "Гродно", "Могилев", "Лида", "Молодечно", "Сморгонь",
-                    "Несвиж"]
-    for city in known_cities:
-        if city.lower() in place_string.lower():
-            return city
-    return "Минск"
-
 async def get_or_create_city_and_country(session, city_name: str, default_country_id: int = 1):
     """
     Ищет город по имени. Если находит, возвращает его и страну.
@@ -445,13 +430,12 @@ async def add_unique_event(event):
         try:
             event_type_obj = await get_or_create(session, EventType, name=event["event_type"])
              # 2. Извлечение города и работа с местом проведения (НОВАЯ ЛОГИКА)
-            city_name_from_parser = extract_city_from_place(event['place'])
             
             # Получаем или создаем город и страну с помощью новой функции
-            city_obj, country_obj = await get_or_create_city_and_country(session, city_name_from_parser)
+            city_obj, country_obj = await get_or_create_city_and_country(session, event['city'])
             artist = await get_or_create(session, Artist, name=event['event_title'])
             venue = await get_or_create(session, Venue, 
-                                        name=event['place'], 
+                                        name=event['venue'], 
                                         city_id=city_obj.city_id,
                                         country_id=country_obj.country_id)
 
