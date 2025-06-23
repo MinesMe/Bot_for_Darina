@@ -1,7 +1,10 @@
 # app/keyboards.py
 
+from datetime import datetime
+import locale
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from dateutil.relativedelta import relativedelta
 
 # --- КОНСТАНТЫ ---
 EVENT_TYPES_RU = ["Концерт", "Театр", "Спорт", "Цирк", "Выставка", "Фестиваль"]
@@ -19,7 +22,7 @@ def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
     )
     builder.row(
         KeyboardButton(text=lexicon.get('main_menu_button_profile')),
-        KeyboardButton(text=lexicon.get('main_menu_button_search'))
+         KeyboardButton(text="⭐ Избранное") 
     )
     return builder.as_markup(resize_keyboard=True)
 
@@ -273,4 +276,96 @@ def get_afisha_settings_type()-> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="По мои настройкам", callback_data=f"afisha_defautl_type_settings"))
     builder.row(InlineKeyboardButton(text="Другую", callback_data=f"afisha_another_type_settings"))
+    return builder.as_markup()
+
+def get_afisha_actions_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру с действиями, доступными после просмотра списка событий.
+    На данный момент это только кнопка "Добавить в подписки".
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=lexicon.get('afisha_add_to_subs_button'), 
+        callback_data="add_events_to_subs"
+    )
+    # В будущем сюда можно добавить кнопки "Отфильтровать еще" или "Поделиться"
+    return builder.as_markup()
+
+def get_date_period_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для первоначального выбора периода."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=lexicon.get('period_today'), callback_data="select_period:today"),
+        InlineKeyboardButton(text=lexicon.get('period_tomorrow'), callback_data="select_period:tomorrow")
+    )
+    builder.row(
+        InlineKeyboardButton(text=lexicon.get('period_this_week'), callback_data="select_period:this_week"),
+        InlineKeyboardButton(text=lexicon.get('period_this_weekend'), callback_data="select_period:this_weekend")
+    )
+    builder.row(InlineKeyboardButton(text=lexicon.get('period_this_month'), callback_data="select_period:this_month"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('period_other_month'), callback_data="select_period:other_month"))
+    return builder.as_markup()
+
+def get_month_choice_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора одного из следующих 12 месяцев."""
+    builder = InlineKeyboardBuilder()
+    current_date = datetime.now()
+    
+    try:
+        locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
+    except locale.Error:
+        locale.setlocale(locale.LC_TIME, '')
+
+    for i in range(12):
+        month_date = current_date + relativedelta(months=+i)
+        button_text = month_date.strftime("%B %Y").capitalize()
+        callback_data = month_date.strftime("select_month:%Y-%m")
+        builder.button(text=button_text, callback_data=callback_data)
+        
+    builder.adjust(3)
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_date_choice_button'), callback_data="back_to_date_choice"))
+    return builder.as_markup()
+
+def get_filter_type_choice_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора типа фильтрации после выбора даты."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=lexicon.get('afisha_filter_by_my_prefs_button'), callback_data="filter_type:my_prefs")
+    builder.button(text=lexicon.get('afisha_filter_by_temporary_button'), callback_data="filter_type:temporary")
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_date_choice_button'), callback_data="back_to_date_choice"))
+    return builder.as_markup()
+
+# --- НОВЫЙ БЛОК: Клавиатуры для раздела "Избранное" ---
+
+def get_favorites_menu_keyboard(lexicon, favorites: list) -> InlineKeyboardMarkup:
+    """Генерирует клавиатуру для главного меню 'Избранное'."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=lexicon.get('favorites_add_button'), callback_data="add_to_favorites")
+    if favorites:
+        builder.button(text=lexicon.get('favorites_remove_button'), callback_data="remove_from_favorites")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_found_artists_for_favorites_keyboard(artists: list, lexicon) -> InlineKeyboardMarkup:
+    """Показывает найденных артистов для добавления в избранное."""
+    builder = InlineKeyboardBuilder()
+    for artist in artists:
+        builder.button(text=artist.name, callback_data=f"add_fav_artist:{artist.artist_id}")
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu"))
+    return builder.as_markup()
+
+def get_favorites_not_found_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """Клавиатура на случай, если поиск по избранному ничего не дал."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu")
+    return builder.as_markup()
+
+def get_remove_from_favorites_keyboard(favorites: list, lexicon ) -> InlineKeyboardMarkup:
+    """Показывает список избранных, где каждая кнопка - для удаления."""
+    builder = InlineKeyboardBuilder()
+    for fav in favorites:
+        builder.button(text=f"🗑️ {fav.name}", callback_data=f"remove_fav_artist:{fav.artist_id}")
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu"))
     return builder.as_markup()

@@ -122,9 +122,30 @@ async def process_edit_city_search(message: Message, state: FSMContext):
 
 @router.callback_query(EditMainGeoFSM.choosing_city, F.data == "back_to_edit_city_list")
 async def cq_back_to_edit_city_list(callback: CallbackQuery, state: FSMContext):
-    """Возвращает к списку городов после поиска."""
-    # Просто вызываем хэндлер выбора страны, он перерисует меню городов
-    await cq_edit_country_selected(callback, state)
+    """Возвращает к списку городов после неудачного поиска."""
+    # Мы не можем вызывать cq_edit_country_selected, так как у нас нет callback.data с именем страны.
+    # Вместо этого мы должны сами получить страну из состояния FSM и сгенерировать меню.
+    
+    data = await state.get_data()
+    country_name = data.get("home_country")
+    
+    if not country_name:
+        # Если в состоянии нет страны (маловероятно, но возможно), возвращаемся в профиль
+        await callback.answer("Произошла ошибка, попробуйте снова.", show_alert=True)
+        await show_profile_menu(callback, state)
+        return
+
+    # Теперь мы делаем то же самое, что и cq_edit_country_selected, но с данными из state
+    await state.set_state(EditMainGeoFSM.choosing_city)
+    lexicon = Lexicon(callback.from_user.language_code)
+    top_cities = await db.get_top_cities_for_country(country_name)
+    
+    await callback.message.edit_text(
+        f"Страна: {hbold(country_name)}. Теперь выберите город.",
+        reply_markup=kb.get_edit_city_keyboard(top_cities, lexicon),
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 @router.callback_query(EditMainGeoFSM.choosing_city, F.data.startswith("edit_city:"))
 async def cq_edit_city_selected(callback: CallbackQuery, state: FSMContext):

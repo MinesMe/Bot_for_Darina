@@ -1,20 +1,16 @@
 # app/database/models.py
 
-import asyncio
-from functools import partial
 import os
-from aiogram import Bot
 from dotenv import load_dotenv
 
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy import (
-    Column, Integer, NullPool, String, Text, ForeignKey,
-    TIMESTAMP, DECIMAL, BigInteger, JSON, Boolean, text
+    Column, Integer, NullPool, String, Text, ForeignKey, TIMESTAMP, DECIMAL, BigInteger,
+    JSON, Boolean, text, Enum, inspect
 )
 
-
-
+# --- Настройка подключения (без изменений) ---
 load_dotenv()
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
@@ -33,14 +29,13 @@ async_session = async_sessionmaker(engine)
 class Base(AsyncAttrs, DeclarativeBase):
     pass
 
-
+# --- Существующие таблицы (остаются без изменений) ---
 class Country(Base):
     __tablename__ = "countries"
     country_id = Column(Integer, primary_key=True)
     name = Column(String(255), unique=True, nullable=False)
     cities = relationship("City", back_populates="country")
     venues = relationship("Venue", back_populates="country")
-
 
 class City(Base):
     __tablename__ = "cities"
@@ -50,23 +45,27 @@ class City(Base):
     country = relationship("Country", back_populates="cities")
     venues = relationship("Venue", back_populates="city")
 
-
 class EventType(Base):
     __tablename__ = "event_types"
     type_id = Column(Integer, primary_key=True)
     name = Column(String(255), unique=True, nullable=False)
     events = relationship("Event", back_populates="event_type")
 
-
+# --- ИЗМЕНЕНИЕ 1: Artist становится нашей сущностью "Объект интереса" ---
+# Мы не будем создавать новую таблицу, а будем считать, что "Artist" может быть
+# не только музыкантом, но и фестивалем, чемпионатом и т.д.
 class Artist(Base):
     __tablename__ = "artists"
     artist_id = Column(Integer, primary_key=True)
     name = Column(String(500), unique=True, nullable=False)
+    # Эта связь показывает, в каких событиях участвует "артист"
     events = relationship("EventArtist", back_populates="artist")
-
+    # НОВАЯ СВЯЗЬ: Пользователи, добавившие этого "артиста" в "Избранное"
+    favorited_by_users = relationship("User", secondary="user_favorites", back_populates="favorite_artists")
 
 class Venue(Base):
     __tablename__ = "venues"
+    # ... (без изменений)
     venue_id = Column(Integer, primary_key=True)
     name = Column(String(500), nullable=False)
     country_id = Column(Integer, ForeignKey("countries.country_id"), nullable=False)
@@ -75,9 +74,9 @@ class Venue(Base):
     city = relationship("City", back_populates="venues")
     events = relationship("Event", back_populates="venue")
 
-
 class Event(Base):
     __tablename__ = "events"
+    # ... (добавляем поле для обновлений от парсера)
     event_id = Column(Integer, primary_key=True)
     title = Column(String(500), nullable=False)
     description = Column(Text)
@@ -87,57 +86,67 @@ class Event(Base):
     date_end = Column(TIMESTAMP)
     price_min = Column(DECIMAL(10, 2))
     price_max = Column(DECIMAL(10, 2))
+    # НОВОЕ ПОЛЕ: для хранения информации о билетах (например, "Осталось мало", "Sold Out")
+    tickets_info = Column(String(255), nullable=True)
+    # Связи
     event_type = relationship("EventType", back_populates="events")
     venue = relationship("Venue", back_populates="events")
     artists = relationship("EventArtist", back_populates="event")
-    links = relationship("EventLink", back_populates="event", cascade="all, delete")
-
+    links = relationship("EventLink", back_populates="event", cascade="all, delete-orphan")
 
 class EventArtist(Base):
     __tablename__ = "event_artists"
+    # ... (без изменений)
     event_id = Column(Integer, ForeignKey("events.event_id", ondelete="CASCADE"), primary_key=True)
     artist_id = Column(Integer, ForeignKey("artists.artist_id", ondelete="CASCADE"), primary_key=True)
     event = relationship("Event", back_populates="artists")
     artist = relationship("Artist", back_populates="events")
 
-
 class EventLink(Base):
     __tablename__ = "event_links"
+    # ... (без изменений)
     link_id = Column(Integer, primary_key=True)
     event_id = Column(Integer, ForeignKey("events.event_id", ondelete="CASCADE"), nullable=False)
     url = Column(String(1024), nullable=False)
     type = Column(String(50))
     event = relationship("Event", back_populates="links")
 
-
 class User(Base):
     __tablename__ = 'users'
+    # ... (добавляем связь с "Избранным")
     user_id = Column(BigInteger, primary_key=True)
     username = Column(String, nullable=True)
     language_code = Column(String(10), nullable=True)
     home_country = Column(String(255), nullable=True)
     home_city = Column(String(255), nullable=True)
     preferred_event_types = Column(JSON, nullable=True)
-    # --- НОВОЕ ПОЛЕ ---
-    # Флаг, который покажет, проходил ли пользователь онбординг мобильности
     main_geo_completed = Column(Boolean, default=False, nullable=False)
     general_geo_completed = Column(Boolean, default=False, nullable=False)
     general_mobility_regions = Column(JSON, nullable=True)
+    # НОВАЯ СВЯЗЬ: "Избранные" артисты/объекты интереса
+    favorite_artists = relationship("Artist", secondary="user_favorites", back_populates="favorited_by_users")
 
-
-# --- НОВАЯ ТАБЛИЦА ДЛЯ ШАБЛОНОВ ---
-
-
-
+# --- ИЗМЕНЕНИЕ 2: Таблица Subscription теперь для КОНКРЕТНЫХ СОБЫТИЙ ---
+# Мы полностью меняем назначение этой таблицы.
 class Subscription(Base):
     __tablename__ = 'subscriptions'
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey('users.user_id', ondelete='CASCADE'))
-    item_name = Column(String(500), nullable=False)
-    category = Column(String(50), nullable=False)
-    # --- НОВЫЕ ПОЛЯ ДЛЯ ГИБКОЙ МОБИЛЬНОСТИ ---
-    # Либо ссылка на шаблон, либо кастомный список регионов
-    regions = Column(JSON, nullable=True)
+    user_id = Column(BigInteger, ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False)
+    # Связь с конкретным событием, а не с именем
+    event_id = Column(Integer, ForeignKey('events.event_id', ondelete='CASCADE'), nullable=False)
+    # Статус для реализации паузы
+    status = Column(Enum('active', 'paused', name='subscription_status_enum'), default='active', nullable=False)
+    # Поле для "Турбо-режима" на будущее
+    is_turbo = Column(Boolean, default=False, nullable=False)
+    # Причина удаления (опционально, для аналитики)
+    deletion_reason = Column(Text, nullable=True)
+
+# --- ИЗМЕНЕНИЕ 3: НОВАЯ таблица для "Избранного" (многие-ко-многим) ---
+# Эта таблица связывает Пользователей и их "Объекты интереса" (Артистов)
+class UserFavorite(Base):
+    __tablename__ = 'user_favorites'
+    user_id = Column(BigInteger, ForeignKey('users.user_id', ondelete='CASCADE'), primary_key=True)
+    artist_id = Column(Integer, ForeignKey('artists.artist_id', ondelete='CASCADE'), primary_key=True)
 
 
 SQL_CREATE_TRIGGER_FUNCTION = """

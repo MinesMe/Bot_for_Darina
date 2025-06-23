@@ -84,73 +84,79 @@ async def process_all_sites():
         print("\nОШИБКА: Таблицы в базе данных не найдены.")
         print("Пожалуйста, сначала запустите main.py, чтобы создать структуру базы, а затем остановите его (Ctrl+C).")
         return
-
     async with async_session() as session:
+        # Вызываем функцию заполнения артистов в начале
         await populate_artists_if_needed(session)
 
-        all_events_with_types = []
-        for site_config in ALL_CONFIGS:
-            event_type_name = site_config.get('event_type', 'Другое')
-            events_from_site = []
-            parsing_method = site_config.get('parsing_method')
+    all_events_with_types = []
+    for site_config in ALL_CONFIGS:
+        # ... (логика вызова парсеров)
+        event_type_name = site_config.get('event_type', 'Другое')
+        events_from_site = []
+        parsing_method = site_config.get('parsing_method')
 
-            if parsing_method == 'json':
-                events_from_site = parse_kvitki(site_config)
-            elif parsing_method == 'bs4_bezkassira':
-                events_from_site = parse_bezkassira(site_config)
-            elif parsing_method == 'bs4_liveball':
-                events_from_site = parse_liveball(site_config)
-            elif parsing_method == 'selenium_yandex':
-                events_from_site = parse_yandex(site_config)
+        if parsing_method == 'json': events_from_site = parse_kvitki(site_config)
+        elif parsing_method == 'bs4_bezkassira': events_from_site = parse_bezkassira(site_config)
+        elif parsing_method == 'bs4_liveball': events_from_site = parse_liveball(site_config)
+        elif parsing_method == 'selenium_yandex': events_from_site = parse_yandex(site_config)
+        else: continue
+
+        for event in events_from_site:
+            event['event_type'] = event_type_name
+        all_events_with_types.extend(events_from_site)
+
+    if not all_events_with_types:
+        print("События не найдены ни на одном из сайтов. Завершаю работу.")
+        return
+
+    print(f"Всего найдено {len(all_events_with_types)} событий. Начинаю обработку...")
+
+    events_created_count = 0
+    events_updated_count = 0
+
+    for event_data in all_events_with_types:
+        if 'title' not in event_data:
+            print(f"ПРЕДУПРЕЖДЕНИЕ: Пропускаю событие без заголовка.")
+            continue
+
+        place = event_data.get('place', 'Место не указано')
+        link = event_data.get('link')
+        time_info = event_data.get('time', 'Время не указано')
+        city = extract_city_from_place(place)
+        
+        start_datetime = None
+        if event_data.get('timestamp'):
+            try:
+                start_datetime = datetime.fromtimestamp(event_data['timestamp'])
+            except (ValueError, TypeError):
+                start_datetime = None
+
+        prepared_data = {
+            "event_type": event_data['event_type'],
+            "venue": place,
+            "city": city,
+            "event_title": event_data['title'],
+            "timestamp": start_datetime,
+            "time": time_info,
+            "price_min": event_data.get('price_min'),
+            "price_max": event_data.get('price_max'),
+            "link": link,
+            "tickets_info": event_data.get('tickets_info', "В наличии")
+        }
+
+        event_obj, is_new = await rq.get_or_create_or_update_event(prepared_data)
+
+        if event_obj:
+            if is_new:
+                events_created_count += 1
+                print(f"✅ СОЗДАНО новое событие: {event_obj.title}")
             else:
-                print(
-                    f"ПРЕДУПРЕЖДЕНИЕ: Неизвестный метод парсинга '{parsing_method}' для сайта '{site_config['site_name']}'. Пропускаю.")
-                continue
-
-            for event in events_from_site:
-                event['event_type'] = event_type_name
-            all_events_with_types.extend(events_from_site)
-
-        if not all_events_with_types:
-            print("События не найдены ни на одном из сайтов. Завершаю работу.")
-            return
-
-        print(f"Всего найдено {len(all_events_with_types)} событий. Начинаю обработку и сохранение в базу данных...")
-
-        # Получаем или создаем страны. Теперь нужно и для России.
-        country_belarus = await rq.get_or_create(session, Country, name="Беларусь")
-        country_russia = await rq.get_or_create(session, Country, name="Россия")
-
-        for event_data in all_events_with_types:
-            city = extract_city_from_place(event_data['place'])
-            print(city)
-            country_id_to_use = country_russia.country_id if city == "Москва" else country_belarus.country_id
-
-            start_datetime = None
-            if event_data.get('timestamp'):
-                try:
-                    start_datetime = datetime.fromtimestamp(event_data['timestamp'])
-                except (ValueError, TypeError):
-                    start_datetime = None
-            event_data_for_test = { 
-                "event_type": event_data['event_type'],      # Используется для event_type_obj
-                'venue': event_data['place'],
-                "city": city, # Используется для venue (и extract_city_from_place)
-                "country": country_id_to_use, # Используется для venue (country_id)
-                "event_title": event_data['title'],    # Используется для artist (name)
-                "timestamp": start_datetime, # Используется для date_start (timestamp), можно None
-                "time": event_data['time'],    # Используется для description нового Event
-                "price_min": event_data.get('price_min'),              # Используется для price_min нового Event (опционально)
-                "price_max": event_data.get('price_max'),             # Используется для price_max нового Event (опционально)
-                "link": event_data['link'] # Используется для EventLink (url)
-            }
-
-
-            await rq.add_unique_event(event_data_for_test)
-            
-
-        await session.commit()
-    print("Обработка завершена. Новые данные успешно сохранены в базу.")
+                events_updated_count += 1
+                print(f"🔄 ОБНОВЛЕНО существующее событие: {event_obj.title}")
+    
+    print("\n--- Обработка завершена ---")
+    print(f"Новых событий создано: {events_created_count}")
+    print(f"Существующих событий обновлено: {events_updated_count}")
 
 
 if __name__ == "__main__":

@@ -6,314 +6,277 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.markdown import hbold
+from datetime import datetime, timedelta
+from calendar import monthrange
 
 from ..database import requests as db
 from .. import keyboards as kb
 from ..lexicon import Lexicon
-from .common import format_grouped_events_for_response, format_events_for_response
-from app.handlers.onboarding import city_search as onboarding_city_search, \
-                                    toggle_event_type as onboarding_toggle_event_type, \
-                                    search_for_city as onboarding_search_for_city
+from .common import format_events_with_headers, format_events_for_response
 
 router = Router()
 
-class AfishaFSM(StatesGroup): # Переименовал для ясности
-    choosing_city = State()           # Состояние выбора города (из списка или после поиска)
-    waiting_city_input = State()    # Состояние ожидания ввода текста для поиска города
-    choosing_event_types = State()    # Состояние выбора типов событий (бывший main_geo_setting)
+# --- Новая, единая FSM для всего флоу "Афиши" ---
+class AfishaFlowFSM(StatesGroup):
+    choosing_date_period = State()
+    choosing_month = State()
+    choosing_filter_type = State()
+    # Состояния для временной настройки
+    temp_choosing_city = State()
+    temp_waiting_city_input = State()
+    temp_choosing_event_types = State()
 
-class SearchGlobalFSM(StatesGroup): # Переименовал для ясности
+# FSM для поиска (остается без изменений)
+class SearchGlobalFSM(StatesGroup):
     waiting_for_query = State()
-    
 
+# FSM для добавления в подписки
+class AddToSubsFSM(StatesGroup):
+    waiting_for_event_numbers = State()
+
+
+# --- Вспомогательная функция для отправки длинных сообщений ---
+async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwargs):
+    """Отправляет длинный текст, разбивая его на части, и крепит клавиатуру к последней."""
+    MESSAGE_LIMIT = 4096
+    if not text.strip():
+        await message.answer("По вашему запросу ничего не найдено.", reply_markup=kwargs.get('reply_markup'))
+        return
+
+    if len(text) <= MESSAGE_LIMIT:
+        await message.answer(text, **kwargs)
+        return
+
+    text_parts = []
+    current_part = ""
+    for line in text.split('\n'):
+        if len(current_part) + len(line) + 1 > MESSAGE_LIMIT:
+            text_parts.append(current_part)
+            current_part = ""
+        current_part += line + '\n'
+    if current_part:
+        text_parts.append(current_part)
+
+    for i, part in enumerate(text_parts):
+        final_kwargs = kwargs if i == len(text_parts) - 1 else {
+            'parse_mode': kwargs.get('parse_mode'),
+            'disable_web_page_preview': kwargs.get('disable_web_page_preview')
+        }
+        await message.answer(part, **final_kwargs)
+
+
+# --- НОВАЯ ТОЧКА ВХОДА В АФИШУ ---
 @router.message(F.text.in_(['🗓 Афиша', '🗓 Events', '🗓 Афіша']))
-async def menu_afisha(message: Message, state: FSMContext):
-    await state.clear() 
-    is_main_geo = await db.check_main_geo_status(message.from_user.id)
-    lexicon = Lexicon(message.from_user.language_code) 
+async def menu_afisha_start(message: Message, state: FSMContext):
+    await state.clear()
+    await state.set_state(AfishaFlowFSM.choosing_date_period)
+    lexicon = Lexicon(message.from_user.language_code)
+    await message.answer(
+        lexicon.get('afisha_choose_period_prompt'),
+        reply_markup=kb.get_date_period_keyboard(lexicon)
+    )
 
-    if not is_main_geo: 
-        await state.update_data(is_settings_complete=False) 
-        await message.answer(
-            lexicon.get('afisha_prompt_no_main_settings_v2'),
-            reply_markup=kb.get_afisha_settings() 
-        )
-    else:
-        await state.update_data(is_settings_complete=True) 
-        await message.answer(
-            lexicon.get('afisha_prompt_with_main_settings_v2'), 
-            reply_markup=kb.get_afisha_settings_type() 
-        )
+@router.callback_query(F.data == "back_to_date_choice")
+async def cq_back_to_date_choice(callback: CallbackQuery, state: FSMContext):
+    """Возвращает к самому первому экрану выбора периода."""
+    await state.set_state(AfishaFlowFSM.choosing_date_period)
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.message.edit_text(
+        lexicon.get('afisha_choose_period_prompt'),
+        reply_markup=kb.get_date_period_keyboard(lexicon)
+    )
 
-@router.callback_query(
-    F.data.in_([
-        "afisha_main_geo_settings", # От kb.get_afisha_settings() -> "Настроить"
-        "skip_afisha_main_geo",     # От kb.get_afisha_settings() -> "Пропустить настройку"
-        "afisha_another_type_settings" # От kb.get_afisha_settings_type() -> "Другую"
-    ]) 
-    # Примечание: Я изменил F.data.startswith на F.data.in_ для тех callback_data,
-    # которые не должны иметь суффикса. Если у вас они имеют суффикс, верните startswith.
-    # В вашем keyboards.py для этих кнопок нет суффиксов.
-)
-async def afisha_start_fsm_setup(callback: CallbackQuery, state:FSMContext): 
-    # await state.set_state(Afisha.main_geo_setting) # НЕПРАВИЛЬНОЕ НАЧАЛЬНОЕ СОСТОЯНИЕ ЗДЕСЬ
-    cq_data = callback.data
+# --- НОВЫЕ ХЭНДЛЕРЫ ВЫБОРА ДАТЫ ---
+@router.callback_query(AfishaFlowFSM.choosing_date_period, F.data.startswith("select_period:"))
+async def process_period_choice(callback: CallbackQuery, state: FSMContext):
+    period = callback.data.split(":")[1]
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    date_from, date_to = None, None
+    
+    if period == "today":
+        date_from = date_to = today
+    elif period == "tomorrow":
+        date_from = date_to = today + timedelta(days=1)
+    elif period == "this_week":
+        date_from = today
+        date_to = today + timedelta(days=(6 - today.weekday()))
+    elif period == "this_weekend":
+        saturday = today + timedelta(days=(5 - today.weekday())) if today.weekday() <= 5 else today
+        sunday = today + timedelta(days=(6 - today.weekday()))
+        date_from, date_to = saturday, sunday
+    elif period == "this_month":
+        date_from = today.replace(day=1)
+        last_day_num = monthrange(today.year, today.month)[1]
+        date_to = today.replace(day=last_day_num)
+    elif period == "other_month":
+        await state.set_state(AfishaFlowFSM.choosing_month)
+        lexicon = Lexicon(callback.from_user.language_code)
+        await callback.message.edit_text(
+            lexicon.get('afisha_choose_month_prompt'),
+            reply_markup=kb.get_month_choice_keyboard(lexicon)
+        )
+        return
+
+    await state.update_data(date_from=date_from, date_to=date_to)
+    await show_filter_type_choice(callback, state)
+
+@router.callback_query(AfishaFlowFSM.choosing_month, F.data.startswith("select_month:"))
+async def process_month_choice(callback: CallbackQuery, state: FSMContext):
+    year_month_str = callback.data.split(":")[1]
+    year, month = map(int, year_month_str.split('-'))
+    
+    date_from = datetime(year, month, 1)
+    last_day_num = monthrange(year, month)[1]
+    date_to = datetime(year, month, last_day_num)
+    
+    await state.update_data(date_from=date_from, date_to=date_to)
+    await show_filter_type_choice(callback, state)
+
+# --- ХЕЛПЕР для показа меню выбора типа фильтра ---
+async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    date_from, date_to = data.get("date_from"), data.get("date_to")
+    
+    await state.set_state(AfishaFlowFSM.choosing_filter_type)
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.message.edit_text(
+        lexicon.get('afisha_choose_filter_type_prompt').format(
+            date_from=date_from.strftime('%d.%m.%Y'),
+            date_to=date_to.strftime('%d.%m.%Y')
+        ),
+        reply_markup=kb.get_filter_type_choice_keyboard(lexicon)
+    )
+
+# --- ОБРАБОТКА ВЫБОРА ТИПА ФИЛЬТРА ---
+
+@router.callback_query(AfishaFlowFSM.choosing_filter_type, F.data == "filter_type:my_prefs")
+async def afisha_by_my_prefs(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     lexicon = Lexicon(callback.from_user.language_code)
-    
-    current_fsm_data = await state.get_data() 
-    is_initial_setup_path = not current_fsm_data.get("is_settings_complete", True)
-
-    if cq_data == "skip_afisha_main_geo":
-        await state.update_data(is_settings_skipped_via_afisha=True) 
-        await state.update_data(save_final_settings_as_main=False) 
-    elif cq_data == "afisha_main_geo_settings" and is_initial_setup_path: # Это основной онбординг через афишу
-        await state.update_data(is_settings_skipped_via_afisha=False)
-        await state.update_data(save_final_settings_as_main=True) 
-    else: # Это временная настройка (afisha_another_type_settings ИЛИ afisha_main_geo_settings когда is_settings_complete=True)
-        await state.update_data(is_settings_skipped_via_afisha=True) 
-        await state.update_data(save_final_settings_as_main=False) 
-
     user_prefs = await db.get_user_preferences(user_id)
-    user_country = user_prefs.get('home_country') if user_prefs else None
     
-    # Проверяем save_final_settings_as_main после того, как оно было установлено
-    data_after_flag_set = await state.get_data()
-    if data_after_flag_set.get("save_final_settings_as_main") and not user_country:
-        await callback.message.edit_text(lexicon.get("afisha_error_country_needed_for_main_setup_v2"))
-        await state.clear()
-        await callback.answer()
-        return
-    
-    if not user_country:
-        await callback.message.edit_text(lexicon.get("afisha_error_country_not_set_v2"))
-        await state.clear()
-        await callback.answer()
+    if not user_prefs or not user_prefs.get("home_city") or not user_prefs.get("preferred_event_types"):
+        await callback.answer("Ваши предпочтения не настроены. Пожалуйста, настройте их в Профиле.", show_alert=True)
         return
 
-    await state.update_data(current_afisha_country=user_country) 
+    data = await state.get_data()
+    date_from, date_to = data.get("date_from"), data.get("date_to")
+    city_name, event_types = user_prefs["home_city"], user_prefs["preferred_event_types"]
+
+    events_by_category = {}
+    for etype in event_types:
+        events = await db.get_grouped_events_by_city_and_category(city_name, etype, date_from, date_to)
+        if events: events_by_category[etype] = events
+            
+    response_text, event_ids = await format_events_with_headers(events_by_category)
     
-    # Устанавливаем правильное начальное состояние для выбора города
-    await state.set_state(AfishaFSM.choosing_city) # ИСПРАВЛЕНО
+    await callback.message.edit_text(f"Вот что я нашел по вашим предпочтениям для г. {hbold(city_name)}:", parse_mode=ParseMode.HTML)
     
-    top_cities = await db.get_top_cities_for_country(user_country)
-    try:
-        await callback.message.edit_text(
-            lexicon.get("afisha_select_city_prompt_v2").format(country_name=user_country),
-            reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
-            parse_mode=ParseMode.HTML
-        )
-    except Exception: 
-        await callback.message.answer(
-             lexicon.get("afisha_select_city_prompt_v2").format(country_name=user_country),
-            reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
-            parse_mode=ParseMode.HTML
-        )
-    await callback.answer()
-
-# Этот хендлер ожидает состояние AfishaFSM.choosing_city
-@router.callback_query(AfishaFSM.choosing_city, F.data == "search_for_home_city") # ИСПРАВЛЕНО состояние
-async def afisha_fsm_ask_city_input(callback: CallbackQuery, state: FSMContext): 
-    await state.set_state(AfishaFSM.waiting_city_input) # ИСПРАВЛЕНО состояние
-    # Убедитесь, что onboarding_search_for_city правильно работает с state и callback
-    await onboarding_search_for_city(callback, state, "Afisha_FSM_Search") 
-
-@router.message(AfishaFSM.waiting_city_input, F.text) # ИСПРАВЛЕНО состояние
-async def afisha_fsm_process_city_input(message: Message, state: FSMContext): 
-    data = await state.get_data() 
-    user_country = data.get('current_afisha_country') 
-    lexicon = Lexicon(message.from_user.language_code)
-
-    if not user_country:
-        await message.reply(lexicon.get("error_state_lost_country_v2"))
+    if not event_ids:
+        await callback.message.answer("По вашим предпочтениям и выбранному периоду ничего не найдено.")
         await state.clear()
         return
-    
-    # Убедитесь, что onboarding_city_search правильно работает с state и message
-    # и не меняет состояние на свое собственное из onboarding.Onboarding FSM
-    await onboarding_city_search(message, state, "Afisha_FSM_Search", user_country)
-    await state.set_state(AfishaFSM.choosing_city) # ИСПРАВЛЕНО состояние, возвращаемся к выбору
 
-@router.callback_query(AfishaFSM.choosing_city, F.data == "back_to_city_selection") # ИСПРАВЛЕНО состояние
-async def afisha_fsm_back_to_city_list(callback: CallbackQuery, state:FSMContext): 
-    data = await state.get_data() 
-    user_country = data.get('current_afisha_country')
+    await state.update_data(last_shown_event_ids=event_ids)
+    await send_long_message(
+        callback.message, response_text, lexicon,
+        parse_mode=ParseMode.HTML, disable_web_page_preview=True,
+        reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+    )
+
+@router.callback_query(AfishaFlowFSM.choosing_filter_type, F.data == "filter_type:temporary")
+async def afisha_by_temporary_prefs_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AfishaFlowFSM.temp_choosing_city)
     lexicon = Lexicon(callback.from_user.language_code)
-
-    if not user_country:
-        await callback.message.edit_text(lexicon.get("error_state_lost_country_v2"))
-        await state.clear()
-        await callback.answer()
-        return
-
-    top_cities = await db.get_top_cities_for_country(user_country)
+    user_prefs = await db.get_user_preferences(callback.from_user.id)
+    country_name = user_prefs.get('home_country') if user_prefs else "Беларусь"
+    
+    await state.update_data(temp_country=country_name)
+    top_cities = await db.get_top_cities_for_country(country_name)
     await callback.message.edit_text(
-        lexicon.get("afisha_select_city_prompt_v2").format(country_name=user_country),
+        f"Страна: {hbold(country_name)}. Теперь выберите город.",
         reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
         parse_mode=ParseMode.HTML
     )
-    await callback.answer()
 
-# Этот хендлер ТЕПЕРЬ ПРАВИЛЬНО ожидает состояние AfishaFSM.choosing_city
-@router.callback_query(AfishaFSM.choosing_city, F.data.startswith("select_home_city:")) # ИСПРАВЛЕНО состояние
-async def afisha_fsm_city_selected_ask_types(callback: CallbackQuery, state: FSMContext): 
+# --- ХЭНДЛЕРЫ ДЛЯ ВРЕМЕННОЙ НАСТРОЙКИ ---
+
+@router.callback_query(AfishaFlowFSM.temp_choosing_city, F.data.startswith("select_home_city:"))
+async def temp_city_selected(callback: CallbackQuery, state: FSMContext): 
     city_name = callback.data.split(":")[1]
-    await state.update_data(current_afisha_city=city_name) 
+    await state.update_data(temp_city=city_name) 
+    await state.set_state(AfishaFlowFSM.temp_choosing_event_types)
+    await state.update_data(temp_event_types=[]) 
+    
     lexicon = Lexicon(callback.from_user.language_code)
-    
-    await state.set_state(AfishaFSM.choosing_event_types) # ИСПРАВЛЕНО состояние (бывший main_geo_setting)
-    await state.update_data(current_afisha_event_types=[]) 
-    
     await callback.message.edit_text(
-        lexicon.get("afisha_city_selected_ask_types_v2").format(city_name=hbold(city_name)),
-        reply_markup=kb.get_event_type_selection_keyboard(lexicon, []), 
+        f"Город: {hbold(city_name)}. Теперь выберите интересующие типы событий:",
+        reply_markup=kb.get_event_type_selection_keyboard(lexicon, []),
         parse_mode=ParseMode.HTML
     )
-    await callback.answer()
 
-# Этот хендлер ожидает состояние AfishaFSM.choosing_event_types
-@router.callback_query(AfishaFSM.choosing_event_types, F.data.startswith("toggle_event_type:")) # ИСПРАВЛЕНО состояние
-async def afisha_fsm_toggle_type(callback: CallbackQuery, state: FSMContext): 
-    event_type_toggled = callback.data.split(":")[1]
-    data = await state.get_data() 
-    current_selection = data.get("current_afisha_event_types", [])
-    if event_type_toggled in current_selection:
-        current_selection.remove(event_type_toggled)
+@router.callback_query(AfishaFlowFSM.temp_choosing_event_types, F.data.startswith("toggle_event_type:"))
+async def temp_toggle_type(callback: CallbackQuery, state: FSMContext): 
+    event_type = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected = data.get("temp_event_types", [])
+    if event_type in selected:
+        selected.remove(event_type)
     else:
-        current_selection.append(event_type_toggled)
-    await state.update_data(current_afisha_event_types=current_selection)
+        selected.append(event_type)
+    await state.update_data(temp_event_types=selected)
     
     lexicon = Lexicon(callback.from_user.language_code)
     await callback.message.edit_reply_markup(
-        reply_markup=kb.get_event_type_selection_keyboard(lexicon, current_selection)
+        reply_markup=kb.get_event_type_selection_keyboard(lexicon, selected)
     )
     await callback.answer()
 
-@router.callback_query(F.data == "afisha_defautl_type_settings") 
-async def afisha_display_by_saved_prefs(callback: CallbackQuery, state: FSMContext): 
-    # ... (код этого хендлера остается без изменений, так как он не зависит от AfishaFSM) ...
-    await state.clear() 
-    user_id = callback.from_user.id
+@router.callback_query(AfishaFlowFSM.temp_choosing_event_types, F.data.startswith("finish_preferences_selection:"))
+async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext): 
+    data = await state.get_data()
     lexicon = Lexicon(callback.from_user.language_code)
-    user_prefs = await db.get_user_preferences(user_id)
-
-    if not user_prefs or not user_prefs.get("home_city") or not user_prefs.get("preferred_event_types"):
-        await callback.message.edit_text(
-             lexicon.get("afisha_error_incomplete_main_settings_v2")
-        )
-        await callback.answer()
-        return
-
-    city_name = user_prefs["home_city"]
-    preferred_event_types = user_prefs["preferred_event_types"]
-
-    if not preferred_event_types: 
-        await callback.message.edit_text(lexicon.get("afisha_error_no_types_in_main_settings_for_city_v2").format(city_name=city_name))
-        await callback.answer()
-        return
-
-    header_text = lexicon.get('afisha_header_by_main_settings_v2').format(city_name=hbold(city_name))
-    try:
-        await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
-    except Exception: 
-        await callback.message.answer(header_text, parse_mode=ParseMode.HTML)
     
-    await callback.answer() 
+    city_name = data.get("temp_city")
+    event_types = data.get("temp_event_types", [])
+    date_from, date_to = data.get("date_from"), data.get("date_to")
 
-    for event_type_name in preferred_event_types:
-        await callback.message.answer(
-            lexicon.get('afisha_loading_category_city_v2').format(category_name=event_type_name, city_name=hbold(city_name)),
-            parse_mode=ParseMode.HTML
-        )
-        events = await db.get_grouped_events_by_city_and_category(city_name, event_type_name)
-        response_text = await format_grouped_events_for_response(events)
+    if not event_types:
+        await callback.answer("Пожалуйста, выберите хотя бы один тип событий!", show_alert=True)
+        return
         
-        if not events:
-            await callback.message.answer(lexicon.get('afisha_no_events_for_category_city_v2').format(city_name=hbold(city_name), category_name=event_type_name), parse_mode=ParseMode.HTML)
-        else:
-            await callback.message.answer(response_text, disable_web_page_preview=True, parse_mode=ParseMode.HTML)
-
-
-# Этот хендлер ожидает состояние AfishaFSM.choosing_event_types
-@router.callback_query(AfishaFSM.choosing_event_types, F.data.startswith("finish_preferences_selection:")) # ИСПРАВЛЕНО состояние
-async def afisha_fsm_finish_and_display_events(callback: CallbackQuery, state: FSMContext): 
-    # ... (код этого хендлера остается без изменений в части логики сохранения и отображения,
-    # так как он уже полагался на флаг save_final_settings_as_main) ...
-    is_confirmed_done = callback.data.split(":")[1] != "False" 
+    events_by_category = {}
+    for etype in event_types:
+        events = await db.get_grouped_events_by_city_and_category(city_name, etype, date_from, date_to)
+        if events: events_by_category[etype] = events
+            
+    response_text, event_ids = await format_events_with_headers(events_by_category)
     
-    data = await state.get_data() 
-    lexicon = Lexicon(callback.from_user.language_code)
-    
-    city_name = data.get("current_afisha_city")
-    selected_event_types = data.get("current_afisha_event_types", [])
-    should_save_preferences = data.get("save_final_settings_as_main", False) 
-    country_name_for_saving = data.get("current_afisha_country")
+    await callback.message.edit_text(f"Вот что я нашел для г. {hbold(city_name)}:", parse_mode=ParseMode.HTML)
 
-    if is_confirmed_done and not selected_event_types:
-        await callback.answer(lexicon.get('afisha_alert_no_types_selected_v2'), show_alert=True)
-        return 
-    
-    if not city_name:
-        await callback.answer(lexicon.get('afisha_alert_no_city_selected_critical_v2'), show_alert=True)
+    if not event_ids:
+        await callback.message.answer("По вашему запросу ничего не найдено.")
         await state.clear()
         return
 
-    header_text_after_setup = ""
-    if should_save_preferences:
-        if not country_name_for_saving:
-            await callback.message.edit_text(lexicon.get('afisha_error_main_save_no_country_critical_v2'))
-            await state.clear()
-            await callback.answer()
-            return
-        
-        header_text_after_setup = lexicon.get('afisha_header_main_settings_saved_v2').format(city_name=hbold(city_name))
-        await db.update_user_preferences(
-            user_id=callback.from_user.id,
-            home_country=country_name_for_saving,
-            home_city=city_name,
-            event_types=selected_event_types,
-            main_geo_completed=True 
-        )
-    else: 
-        header_text_after_setup = lexicon.get('afisha_header_temp_choice_v2').format(city_name=hbold(city_name))
+    await state.update_data(last_shown_event_ids=event_ids)
+    await send_long_message(
+        callback.message, response_text, lexicon,
+        parse_mode=ParseMode.HTML, disable_web_page_preview=True,
+        reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+    )
 
-    try:
-        await callback.message.edit_text(header_text_after_setup, parse_mode=ParseMode.HTML)
-    except Exception: 
-        await callback.message.answer(header_text_after_setup, parse_mode=ParseMode.HTML)
-
-    await state.clear() 
-    await callback.answer() 
-
-    if selected_event_types: 
-        for event_type_name in selected_event_types:
-            await callback.message.answer(
-                lexicon.get('afisha_loading_category_city_v2').format(category_name=event_type_name, city_name=hbold(city_name)),
-                parse_mode=ParseMode.HTML
-            )
-            events = await db.get_grouped_events_by_city_and_category(city_name, event_type_name)
-            response_text = await format_grouped_events_for_response(events)
-            
-            if not events:
-                await callback.message.answer(lexicon.get('afisha_no_events_for_category_city_v2').format(city_name=hbold(city_name), category_name=event_type_name), parse_mode=ParseMode.HTML)
-            else:
-                await callback.message.answer(response_text, disable_web_page_preview=True, parse_mode=ParseMode.HTML)
-    elif not is_confirmed_done: 
-        await callback.message.answer(lexicon.get('afisha_no_types_info_v2'))
-
-
+# --- ПОИСК (остается без изменений, но можно будет добавить и ему выбор даты) ---
 @router.message(F.text.in_(['🔎 Поиск', '🔎 Search', '🔎 Пошук'])) 
 async def menu_search(message: Message, state: FSMContext): 
     await state.clear()
-    await state.set_state(SearchGlobalFSM.waiting_for_query) # ИСПРАВЛЕНО состояние
+    await state.set_state(SearchGlobalFSM.waiting_for_query)
     lexicon = Lexicon(message.from_user.language_code)
     await message.answer(lexicon.get('search_prompt_enter_query_v2'))
 
-
-@router.message(SearchGlobalFSM.waiting_for_query, F.text) # ИСПРАВЛЕНО состояние
+@router.message(SearchGlobalFSM.waiting_for_query, F.text)
 async def search_query_handler(message: Message, state: FSMContext): 
-    # ... (код этого хендлера остается без изменений в части логики поиска и отображения) ...
-    await state.clear()
     user_id = message.from_user.id
     lexicon = Lexicon(message.from_user.language_code)
     
@@ -328,9 +291,60 @@ async def search_query_handler(message: Message, state: FSMContext):
     )
 
     found_events = await db.find_events_fuzzy(message.text, search_regions)
-    response_text = await format_events_for_response(found_events) 
+    response_text, event_ids = await format_events_for_response(found_events) 
     
     if not found_events:
         await message.answer(lexicon.get('search_no_results_found_v2').format(query_text=hbold(message.text)))
+        await state.clear()
     else:
-        await message.answer(response_text, disable_web_page_preview=True, parse_mode=ParseMode.HTML)
+        await state.update_data(last_shown_event_ids=event_ids)
+        await message.answer(
+            response_text, 
+            disable_web_page_preview=True, 
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+        )
+
+# --- ДОБАВЛЕНИЕ В ПОДПИСКИ (остается без изменений) ---
+@router.callback_query(F.data == "add_events_to_subs")
+async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("last_shown_event_ids"):
+        await callback.answer("Сначала нужно найти события через Афишу или Поиск.", show_alert=True)
+        return
+
+    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
+    await callback.answer()
+
+@router.message(AddToSubsFSM.waiting_for_event_numbers, F.text)
+async def process_event_numbers(message: Message, state: FSMContext):
+    lexicon = Lexicon(message.from_user.language_code)
+    data = await state.get_data()
+    last_shown_ids = data.get("last_shown_event_ids", [])
+
+    try:
+        input_numbers = [int(num.strip()) for num in message.text.replace(',', ' ').split()]
+        event_ids_to_add, invalid_numbers = [], []
+        
+        for num in input_numbers:
+            if 1 <= num <= len(last_shown_ids):
+                event_ids_to_add.append(last_shown_ids[num - 1])
+            else:
+                invalid_numbers.append(str(num))
+
+        if invalid_numbers:
+            await message.reply(lexicon.get('subs_invalid_numbers_error').format(invalid_list=", ".join(invalid_numbers)))
+        
+        if event_ids_to_add:
+            await db.add_events_to_subscriptions_bulk(message.from_user.id, event_ids_to_add)
+            await message.reply(lexicon.get('subs_added_success').format(count=len(event_ids_to_add)))
+        
+        if not event_ids_to_add and not invalid_numbers:
+             await message.reply(lexicon.get('subs_no_valid_numbers_provided'))
+
+    except ValueError:
+        await message.reply(lexicon.get('subs_nan_error'))
+    
+    await state.clear()

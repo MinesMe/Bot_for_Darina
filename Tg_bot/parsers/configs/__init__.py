@@ -35,10 +35,10 @@ ALL_CONFIGS = [
     liveball_by_hockey_config,
 
     # --- НОВОЕ: Добавляем конфиги Яндекса в общий список ---
-    yandex_by_sport_config,
-    yandex_by_festival_config,
-    yandex_by_art_config,
-    yandex_by_theatre_config,
-    yandex_by_cinema_config,
-    yandex_by_concert_config,
+    # yandex_by_sport_config,
+    # yandex_by_festival_config,
+    # yandex_by_art_config,
+    # yandex_by_theatre_config,
+    # yandex_by_cinema_config,
+    # yandex_by_concert_config,
 ]

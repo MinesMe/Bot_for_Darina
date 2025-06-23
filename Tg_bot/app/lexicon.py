@@ -69,10 +69,47 @@ class Lexicon:
                 'afisha_error_incomplete_main_settings_v2': "Ваши основные настройки (город и/или типы событий) неполные или отсутствуют. Пожалуйста, настройте их через Профиль (команда /settings) или пройдите начальную настройку (/start), или выберите опцию для временной настройки афиши.",
                 'afisha_error_no_types_in_main_settings_for_city_v2': "В ваших сохраненных настройках не указаны предпочитаемые типы событий для города {city_name}.",
                 'afisha_header_by_main_settings_v2': "🗓️ Афиша по вашим сохраненным настройкам для г. {city_name}:",
+                 'afisha_choose_period_prompt': "На какой период ищем события?",
+                'afisha_choose_month_prompt': "Выберите интересующий вас месяц:",
+                'afisha_choose_filter_type_prompt': "Отлично! Ищем с {date_from} по {date_to}.\n\nКак будем фильтровать?",
+                'afisha_filter_by_my_prefs_button': "По моим предпочтениям",
+                'afisha_filter_by_temporary_button': "Выбрать локацию и категории",
+                'back_to_date_choice_button': "⬅️ К выбору периода",
+                # Кнопки для клавиатуры выбора периода
+                'period_today': "Сегодня",
+                'period_tomorrow': "Завтра",
+                'period_this_week': "На этой неделе",
+                'period_this_weekend': "На выходных",
+                'period_this_month': "На этот месяц",
+                'period_other_month': "🗓 Выбрать другой месяц",
 
                 'search_prompt_enter_query_v2': "Введите название события или имя артиста для поиска:",
                 'search_searching_for_query_v2': "🔎 Ищу события: «{query_text}»...",
                 'search_no_results_found_v2': "😔 По вашему запросу «{query_text}» ничего не найдено. Попробуйте другой запрос.",
+
+                'main_menu_button_favorites': "⭐ Избранное",
+                'favorites_menu_header_empty': "У вас пока нет избранных артистов или событий. Давайте добавим первого?",
+                'favorites_menu_header': "Ваше избранное:\n{favorites_list}",
+                'favorites_add_button': "➕ Добавить в избранное",
+                'favorites_remove_button': "🗑️ Удалить из избранного",
+                'favorites_enter_name_prompt': "Введите имя артиста, группы или название фестиваля, который хотите отслеживать:",
+                'favorites_not_found': "К сожалению, по вашему запросу ничего не найдено. Попробуйте еще раз или вернитесь назад.",
+                'favorites_found_prompt': "Вот кого я нашел. Выберите нужный вариант:",
+                'favorites_added_alert': "✅ Добавлено в избранное!",
+                'favorites_remove_prompt': "Нажмите на артиста/событие, которое хотите удалить из избранного:",
+                'favorites_removed_alert': "🗑️ Удалено из избранного.",
+                'favorites_remove_empty_alert': "У вас нет ничего в избранном для удаления.",
+                'back_to_favorites_menu_button': "⬅️ Назад в меню 'Избранное'",
+
+                'afisha_add_to_subs_button': "➕ Добавить в подписки",
+                'subs_enter_numbers_prompt': "Введите номера событий, которые хотите отслеживать, через запятую или пробел (например: 1, 3, 5).",
+                'subs_invalid_numbers_error': "⚠️ Ошибка: номера {invalid_list} некорректны. Пожалуйста, вводите только те номера, что видите в списке.",
+                'subs_added_success': "✅ Успешно добавлено в подписки: {count} шт.",
+                'subs_no_valid_numbers_provided': "Вы не ввели ни одного корректного номера.",
+                'subs_nan_error': "Пожалуйста, вводите только числа.",
+                'subs_add_from_afisha_offer': "Вы можете добавить эти события в свои подписки.", # Текст перед кнопкой
+
+                
             },
             'be': {
                 # Здесь только те ключи, которые отличаются от русского
@@ -103,6 +140,45 @@ class Lexicon:
                 'profile_menu_header': "👤 Your Profile",
                 'profile_button_location': "📍 Change Location",
                 'profile_button_subs': "⭐ My Subscriptions",
+
+                'main_menu_button_favorites': "⭐ Favorites",
+                'favorites_menu_header_empty': "You have no favorites yet. Let's add the first one?",
+                'favorites_menu_header': "Your Favorites:\n{favorites_list}",
+                'favorites_add_button': "➕ Add to Favorites",
+                'favorites_remove_button': "🗑️ Remove from Favorites",
+                'favorites_enter_name_prompt': "Enter the name of the artist, band, or festival you want to track:",
+                'favorites_not_found': "Unfortunately, nothing was found for your query. Please try again or go back.",
+                'favorites_found_prompt': "Here's what I found. Please select the correct one:",
+                'favorites_added_alert': "✅ Added to favorites!",
+                'favorites_remove_prompt': "Click on the artist/event you want to remove from your favorites:",
+                'favorites_removed_alert': "🗑️ Removed from favorites.",
+                'favorites_remove_empty_alert': "You have nothing in your favorites to remove.",
+                'back_to_favorites_menu_button': "⬅️ Back to Favorites Menu",
+
+                'afisha_add_to_subs_button': "➕ Add to Subscriptions",
+                'subs_enter_numbers_prompt': "Enter the numbers of the events you want to track, separated by a comma or space (e.g., 1, 3, 5).",
+                'subs_invalid_numbers_error': "⚠️ Error: The numbers {invalid_list} are invalid. Please enter only the numbers you see in the list.",
+                'subs_added_success': "✅ Successfully added to subscriptions: {count} item(s).",
+                'subs_no_valid_numbers_provided': "You did not provide any valid numbers.",
+                'subs_nan_error': "Please enter numbers only.",
+                'subs_add_from_afisha_offer': "You can add these events to your subscriptions.", # Текст перед кнопкой
+
+                'back_button': "⬅️ Back",
+    
+                # --- ДОБАВИТЬ ЭТОТ БЛОК (АНГЛ.) ---
+                'afisha_choose_period_prompt': "For what period are we looking for events?",
+                'afisha_choose_month_prompt': "Please select a month:",
+                'afisha_choose_filter_type_prompt': "Great! Searching from {date_from} to {date_to}.\n\nHow should we filter?",
+                'afisha_filter_by_my_prefs_button': "By my preferences",
+                'afisha_filter_by_temporary_button': "Choose location and categories",
+                'back_to_date_choice_button': "⬅️ Back to period selection",
+                # Кнопки для клавиатуры выбора периода
+                'period_today': "Today",
+                'period_tomorrow': "Tomorrow",
+                'period_this_week': "This week",
+                'period_this_weekend': "This weekend",
+                'period_this_month': "This month",
+                'period_other_month': "🗓 Choose another month",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---
