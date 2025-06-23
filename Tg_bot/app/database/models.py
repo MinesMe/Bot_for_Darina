@@ -94,6 +94,8 @@ class Event(Base):
     artists = relationship("EventArtist", back_populates="event")
     links = relationship("EventLink", back_populates="event", cascade="all, delete-orphan")
 
+    subscriptions = relationship("Subscription", back_populates="event", cascade="all, delete-orphan")
+
 class EventArtist(Base):
     __tablename__ = "event_artists"
     # ... (без изменений)
@@ -140,6 +142,8 @@ class Subscription(Base):
     is_turbo = Column(Boolean, default=False, nullable=False)
     # Причина удаления (опционально, для аналитики)
     deletion_reason = Column(Text, nullable=True)
+
+    event = relationship("Event", back_populates="subscriptions")
 
 # --- ИЗМЕНЕНИЕ 3: НОВАЯ таблица для "Избранного" (многие-ко-многим) ---
 # Эта таблица связывает Пользователей и их "Объекты интереса" (Артистов)

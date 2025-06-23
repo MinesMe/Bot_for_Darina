@@ -85,20 +85,31 @@ def get_back_to_city_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
 
 # --- НОВЫЕ И ПЕРЕРАБОТАННЫЕ КЛАВИАТУРЫ ДЛЯ ПОДПИСОК ---
 
-def get_manage_subscriptions_keyboard(items: list) -> InlineKeyboardMarkup:
+def get_manage_subscriptions_keyboard(subscriptions: list, lexicon) -> InlineKeyboardMarkup:
     """
     Показывает список подписок. Нажатие на подписку открывает ее для просмотра/редактирования.
     НЕ содержит кнопки "Добавить".
     """
     builder = InlineKeyboardBuilder()
-    if items:
-        for item in items:
-            # Используем callback 'view_subscription'
-            builder.button(text=f"⭐ {item}", callback_data=f"view_subscription:{item}")
+    if subscriptions:
+        for sub_event in subscriptions:
+            # Ищем подписку текущего пользователя среди всех подписок на это событие
+            # (в 99% случаев она будет одна, но это самый надежный способ)
+            user_subscription = next((sub for sub in sub_event.subscriptions), None)
+            
+            status_emoji = ""
+            if user_subscription:
+                status_emoji = "▶️" if user_subscription.status == 'active' else "⏸️"
+
+            button_text = f"{status_emoji} {sub_event.title}"
+            
+            builder.button(
+                text=button_text, 
+                callback_data=f"view_subscription:{sub_event.event_id}"
+            )
         builder.adjust(1)
     
-    # Кнопка "Назад" для возврата в главное меню профиля
-    builder.row(InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="back_to_profile"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_profile_button'), callback_data="back_to_profile"))
     return builder.as_markup()
 
 def get_edit_country_keyboard(countries: list, lexicon) -> InlineKeyboardMarkup:
@@ -141,16 +152,22 @@ def get_edit_found_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboar
     builder.row(InlineKeyboardButton(text="⬅️ Назад к выбору города", callback_data="back_to_edit_city_list"))
     return builder.as_markup()
 
-def get_single_subscription_manage_keyboard(item_name: str) -> InlineKeyboardMarkup:
+def get_single_subscription_manage_keyboard(event_id: int, current_status: str, lexicon) -> InlineKeyboardMarkup:
     """
     Клавиатура для управления одной конкретной подпиской.
     """
     builder = InlineKeyboardBuilder()
-    # Экранируем item_name, если он содержит символы, которые могут сломать callback
-    safe_item_name = item_name.replace(":", "") 
-    builder.button(text="✏️ Редактировать регионы", callback_data=f"edit_sub_regions:{safe_item_name}")
-    builder.button(text="🗑️ Удалить подписку", callback_data=f"delete_subscription:{safe_item_name}")
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="back_to_subscriptions_list"))
+    
+    # Умная кнопка паузы/возобновления
+    if current_status == 'active':
+        toggle_button_text = lexicon.get('subs_pause_button') # "⏸️ Поставить на паузу"
+    else:
+        toggle_button_text = lexicon.get('subs_resume_button') # "▶️ Возобновить"
+        
+    builder.button(text=toggle_button_text, callback_data=f"toggle_sub_status:{event_id}")
+    builder.button(text=lexicon.get('subs_unsubscribe_button'), callback_data=f"delete_subscription:{event_id}") # Используем delete_subscription, как в хэндлере
+    
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_subscriptions_list_button'), callback_data="back_to_subscriptions_list"))
     return builder.as_markup()
 
 def get_general_onboarding_keyboard() -> InlineKeyboardMarkup:

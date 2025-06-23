@@ -169,12 +169,15 @@ async def get_user_subscriptions(user_id: int) -> list[Event]:
         stmt = (
             select(Event)
             .join(Subscription)
-            .where(and_(Subscription.user_id == user_id, Subscription.status == 'active'))
-            .options(selectinload(Event.venue).selectinload(Venue.city)) # Подгружаем связанные данные
+            .where(Subscription.user_id == user_id) 
+            .options(
+                selectinload(Event.venue).selectinload(Venue.city),
+                selectinload(Event.subscriptions).load_only(Subscription.status)
+            )
             .order_by(Event.date_start)
         )
         result = await session.execute(stmt)
-        return result.scalars().all()
+        return result.scalars().unique().all()
 
 
 async def add_events_to_subscriptions_bulk(user_id: int, event_ids: list[int]):
@@ -640,17 +643,21 @@ async def get_subscribers_for_event_title(event_title: str) -> list[int]:
         return list(user_ids)
     
 
-# async def get_subscription_details(user_id: int, item_name: str) -> Subscription | None:
-#     """Получает полную информацию о конкретной подписке пользователя."""
-#     async with async_session() as session:
-#         stmt = select(Subscription).where(
-#             and_(
-#                 Subscription.user_id == user_id,
-#                 Subscription.item_name == item_name
-#             )
-#         )
-#         result = await session.execute(stmt)
-#         return result.scalar_one_or_none()
+async def get_subscription_details(user_id: int, event_id: int) -> Subscription | None:
+    """
+    Получает полную информацию о конкретной подписке пользователя
+    по user_id и event_id.
+    """
+    async with async_session() as session:
+        stmt = select(Subscription).where(
+            and_(
+                Subscription.user_id == user_id,
+                # ИЗМЕНЕНИЕ: Фильтруем по event_id, а не по item_name
+                Subscription.event_id == event_id 
+            )
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
 # async def update_subscription_regions(user_id: int, item_name: str, new_regions: list):
 #     """Обновляет регионы для конкретной подписки."""
@@ -746,3 +753,11 @@ async def get_or_create_or_update_event(event_data: dict) -> tuple[Event | None,
                 await session.rollback()
                 print(f"Ошибка при создании нового ивента: {e}")
                 return None, False
+            
+
+async def get_event_by_id(event_id: int) -> Event | None:
+    """Находит событие по его ID."""
+    async with async_session() as session:
+        # Используем session.get для простого поиска по первичному ключу
+        result = await session.get(Event, event_id)
+        return result

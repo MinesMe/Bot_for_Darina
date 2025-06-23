@@ -109,6 +109,20 @@ class Lexicon:
                 'subs_nan_error': "Пожалуйста, вводите только числа.",
                 'subs_add_from_afisha_offer': "Вы можете добавить эти события в свои подписки.", # Текст перед кнопкой
 
+                'subs_menu_header_active': "Вы отслеживаете следующие события.\nНажмите на любое, чтобы управлять им:",
+                'subs_menu_header_empty': "У вас нет активных подписок на события. Вы можете добавить их из 'Афиши'.",
+                'subs_status_active': "Активна",
+                'subs_status_paused': "На паузе",
+                'subs_pause_button': "⏸️ Поставить на паузу",
+                'subs_resume_button': "▶️ Возобновить",
+                'subs_unsubscribe_button': "🗑️ Отписаться",
+                'subs_paused_alert': "🔔 Напоминания по этому событию приостановлены.",
+                'subs_resumed_alert': "🔔 Напоминания по этому событию возобновлены.",
+                'subs_removed_alert': "Вы отписались от этого события.",
+                'subs_not_found_alert': "Ошибка: подписка не найдена.",
+                'back_to_subscriptions_list_button': "⬅️ К списку подписок",
+                'back_to_profile_button': "⬅️ Назад ",
+
                 
             },
             'be': {
@@ -179,6 +193,19 @@ class Lexicon:
                 'period_this_weekend': "This weekend",
                 'period_this_month': "This month",
                 'period_other_month': "🗓 Choose another month",
+
+                'subs_menu_header_active': "You are tracking the following events.\nClick on any to manage it:",
+                'subs_menu_header_empty': "You have no active event subscriptions. You can add them from the 'Events' section.",
+                'subs_status_active': "Active",
+                'subs_status_paused': "Paused",
+                'subs_pause_button': "⏸️ Pause",
+                'subs_resume_button': "▶️ Resume",
+                'subs_unsubscribe_button': "🗑️ Unsubscribe",
+                'subs_paused_alert': "🔔 Reminders for this event have been paused.",
+                'subs_resumed_alert': "🔔 Reminders for this event have been resumed.",
+                'subs_removed_alert': "You have unsubscribed from this event.",
+                'subs_not_found_alert': "Error: subscription not found.",
+                'back_to_subscriptions_list_button': "⬅️ Back to subscriptions",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

@@ -11,6 +11,7 @@ from ..database import requests as db
 from .. import keyboards as kb
 from ..lexicon import Lexicon
 from .subscriptions import SubscriptionFlow 
+from ..database.models import Event, Subscription # Импортируем модели для type hinting
 
 router = Router()
 
@@ -25,6 +26,9 @@ class EditMainGeoFSM(StatesGroup):
 class ProfileFSM(StatesGroup):
     viewing_subscription = State()
     editing_subscription_regions = State()
+
+class EditMobilityFSM(StatesGroup):
+    selecting_regions = State()
 
 
 # --- Хелперы и главное меню профиля ---
@@ -199,14 +203,21 @@ async def cq_edit_finish(callback: CallbackQuery, state: FSMContext):
 # --- Флоу редактирования ОБЩЕЙ МОБИЛЬНОСТИ ---
 @router.callback_query(F.data == "edit_general_mobility")
 async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionFlow.selecting_general_regions)
+    """Начинает флоу редактирования общей мобильности, используя СВОЮ FSM."""
+    # Устанавливаем состояние из НАШЕЙ новой FSM
+    await state.set_state(EditMobilityFSM.selecting_regions)
+    
     current_regions = await db.get_general_mobility(callback.from_user.id) or []
-    await state.update_data(selected_regions=current_regions)
+    await state.update_data(selected_regions=current_regions) # Сохраняем текущий выбор
     all_countries = await db.get_countries()
+    
     await callback.message.edit_text(
         "Измените свой список стран для 'общей мобильности'.",
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, current_regions, finish_callback="finish_general_edit_from_profile"
+            all_countries, 
+            current_regions, 
+            # Используем простой и уникальный callback
+            finish_callback="finish_mobility_edit"
         )
     )
     await callback.answer()
@@ -215,25 +226,41 @@ async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
 async def cq_finish_general_edit_from_profile(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     regions = data.get("selected_regions", [])
+    
     if not regions:
         await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
         return
+
     await db.set_general_mobility(callback.from_user.id, regions)
     await callback.answer("✅ Общие настройки мобильности сохранены!", show_alert=True)
+    
+    # Возвращаемся в меню профиля, а не продолжаем флоу подписок
     await show_profile_menu(callback, state)
 
 
 # --- Флоу управления ПОДПИСКАМИ ---
-async def show_subscriptions_list(callback: CallbackQuery, state: FSMContext):
+async def show_subscriptions_list(callback_or_message: Message | CallbackQuery, state: FSMContext):
+    """Показывает список подписок на события."""
     await state.clear() 
-    user_id = callback.from_user.id
+    user_id = callback_or_message.from_user.id
+    lexicon = Lexicon(callback_or_message.from_user.language_code)
+    
     subs = await db.get_user_subscriptions(user_id)
-    text = "Твои подписки:\nНажми на любую, чтобы управлять ей." if subs else "У тебя пока нет подписок."
-    await callback.message.edit_text(
-        text=text,
-        reply_markup=kb.get_manage_subscriptions_keyboard(subs)
-    )
-    await callback.answer()
+    
+    text = lexicon.get('subs_menu_header_active')
+    if not subs:
+        text = lexicon.get('subs_menu_header_empty')
+    
+    markup = kb.get_manage_subscriptions_keyboard(subs, lexicon)
+
+    # ИЗМЕНЕНИЕ: Правильно определяем, редактировать или отправлять новое сообщение
+    if isinstance(callback_or_message, CallbackQuery):
+        # Если это callback, всегда редактируем
+        await callback_or_message.message.edit_text(text=text, reply_markup=markup)
+        await callback_or_message.answer()
+    else:
+        # Если это сообщение, отправляем новое
+        await callback_or_message.answer(text=text, reply_markup=markup)
 
 @router.callback_query(F.data == "manage_my_subscriptions")
 async def cq_manage_my_subscriptions(callback: CallbackQuery, state: FSMContext):
@@ -245,71 +272,117 @@ async def cq_back_to_subscriptions_list(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data.startswith("view_subscription:"))
 async def cq_view_subscription(callback: CallbackQuery, state: FSMContext):
-    item_name = callback.data.split(":", 1)[1]
-    sub_details = await db.get_subscription_details(callback.from_user.id, item_name)
-    if not sub_details:
-        await callback.answer("Подписка не найдена. Возможно, она была удалена.", show_alert=True)
+    """Показывает детальную информацию по одной подписке."""
+    try:
+        event_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка: неверный ID события.", show_alert=True)
+        return
+
+    sub_details = await db.get_subscription_details(callback.from_user.id, event_id)
+    
+    # Получаем детали события напрямую, без новой функции
+    async with db.async_session() as session:
+        event_details = await session.get(Event, event_id)
+
+    if not sub_details or not event_details:
+        await callback.answer("Подписка или событие не найдено.", show_alert=True)
         await show_subscriptions_list(callback, state)
         return
-    regions_str = ", ".join(sub_details.regions) if sub_details.regions else "Не заданы"
-    text = (f"Подписка: {hbold(item_name)}\n\n"
-            f"🌍 Регионы отслеживания: {regions_str}")
-    await state.set_state(ProfileFSM.viewing_subscription)
-    await state.update_data(viewing_item_name=item_name)
+
+    lexicon = Lexicon(callback.from_user.language_code)
+    status_text = lexicon.get('subs_status_active') if sub_details.status == 'active' else lexicon.get('subs_status_paused')
+    date_str = event_details.date_start.strftime('%d.%m.%Y %H:%M') if event_details.date_start else "Дата не указана"
+    
+    text = (f"Подписка на событие: {hbold(event_details.title)}\n"
+            f"Дата: {date_str}\n\n"
+            f"Статус: {status_text}")
+    
     await callback.message.edit_text(
         text,
-        reply_markup=kb.get_single_subscription_manage_keyboard(item_name),
+        reply_markup=kb.get_single_subscription_manage_keyboard(event_id, sub_details.status, lexicon),
         parse_mode="HTML"
     )
     await callback.answer()
 
-@router.callback_query(ProfileFSM.viewing_subscription, F.data.startswith("delete_subscription:"))
+@router.callback_query(F.data.startswith("toggle_sub_status:"))
+async def cq_toggle_subscription_status(callback: CallbackQuery, state: FSMContext):
+    """Переключает статус подписки (active/paused)."""
+    try:
+        event_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка: неверный ID события.", show_alert=True)
+        return
+        
+    user_id = callback.from_user.id
+    lexicon = Lexicon(callback.from_user.language_code)
+    
+    current_sub = await db.get_subscription_details(user_id, event_id)
+    
+    if current_sub:
+        new_status = 'paused' if current_sub.status == 'active' else 'active'
+        await db.set_subscription_status(user_id, event_id, new_status)
+        
+        alert_text = lexicon.get('subs_paused_alert') if new_status == 'paused' else lexicon.get('subs_resumed_alert')
+        await callback.answer(alert_text, show_alert=True)
+        
+        # ИЗМЕНЕНИЕ: Передаем сам объект callback, а не callback.message
+        await show_subscriptions_list(callback, state)
+    else:
+        await callback.answer(lexicon.get('subs_not_found_alert'), show_alert=True)
+
+@router.callback_query(F.data.startswith("delete_subscription:"))
 async def cq_delete_subscription(callback: CallbackQuery, state: FSMContext):
-    item_name = callback.data.split(":", 1)[1]
-    await db.remove_subscription(callback.from_user.id, item_name)
-    await callback.answer(f"Подписка на {item_name} удалена.", show_alert=True)
-    await show_subscriptions_list(callback, state)
+    try:
+        event_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка: неверный ID события.", show_alert=True)
+        return
+    
+    # 1. Вызываем функцию удаления из БД
+    await db.remove_subscription(callback.from_user.id, event_id)
+    
+    # 2. Сообщаем пользователю об успехе
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.answer(lexicon.get('subs_removed_alert'), show_alert=True)
+    
+    # 3. Обновляем список подписок, чтобы пользователь увидел изменения
+    # ВАЖНО: Мы должны передать state, так как show_subscriptions_list его ожидает
+    await show_subscriptions_list(callback, state)  
 
-@router.callback_query(ProfileFSM.viewing_subscription, F.data.startswith("edit_sub_regions:"))
-async def cq_edit_subscription_regions(callback: CallbackQuery, state: FSMContext):
-    item_name = callback.data.split(":", 1)[1]
-    await state.update_data(editing_item_name=item_name)
-    current_sub = await db.get_subscription_details(callback.from_user.id, item_name)
-    current_regions = current_sub.regions if current_sub else []
-    await state.set_state(ProfileFSM.editing_subscription_regions)
-    await state.update_data(selected_regions=current_regions)
-    all_countries = await db.get_countries()
-    await callback.message.edit_text(
-        f"Редактирование регионов для подписки: {hbold(item_name)}",
-        reply_markup=kb.get_region_selection_keyboard(all_countries, current_regions, finish_callback="finish_subscription_edit"),
-        parse_mode="HTML"
-    )
-    await callback.answer()
 
-@router.callback_query(ProfileFSM.editing_subscription_regions, F.data.startswith("toggle_region:"))
-async def cq_toggle_region_for_edit(callback: CallbackQuery, state: FSMContext):
+
+
+@router.callback_query(EditMobilityFSM.selecting_regions, F.data.startswith("toggle_region:"))
+async def cq_toggle_mobility_region(callback: CallbackQuery, state: FSMContext):
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
+    
     if region_name in selected:
         selected.remove(region_name)
     else:
         selected.append(region_name)
+        
     await state.update_data(selected_regions=selected)
     all_countries = await db.get_countries()
+    
+    # Перерисовываем клавиатуру с тем же уникальным callback
     await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, finish_callback="finish_subscription_edit")
+        reply_markup=kb.get_region_selection_keyboard(
+            all_countries, selected, finish_callback="finish_mobility_edit"
+        )
     )
     await callback.answer()
 
-@router.callback_query(ProfileFSM.editing_subscription_regions, F.data == "finish_subscription_edit")
-async def cq_finish_subscription_edit(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(EditMobilityFSM.selecting_regions, F.data == "finish_mobility_edit")
+async def cq_finish_mobility_edit(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    new_regions = data.get("selected_regions", [])
-    item_name = data.get("editing_item_name")
-    if not new_regions:
-        await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
-        return
-    await db.update_subscription_regions(callback.from_user.id, item_name, new_regions)
-    await callback.answer("Регионы для подписки обновлены!", show_alert=True)
-    await show_subscriptions_list(callback, state)
+    regions = data.get("selected_regions", [])
+
+    await db.set_general_mobility(callback.from_user.id, regions)
+    await callback.answer("✅ Общие настройки мобильности сохранены!", show_alert=True)
+    
+    # Возвращаемся в меню профиля
+    await show_profile_menu(callback, state)
+

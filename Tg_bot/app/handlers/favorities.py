@@ -121,4 +121,5 @@ async def cq_back_to_favorites_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.delete()
     lexicon = Lexicon(callback.from_user.language_code)
-    await show_favorites_menu(callback.message, lexicon)
+    user_favorites = await db.get_user_favorites(callback.from_user.id)
+    await show_favorites_menu(callback.message, lexicon, user_favorites)
