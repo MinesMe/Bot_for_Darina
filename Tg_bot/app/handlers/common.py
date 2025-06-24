@@ -145,7 +145,6 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     if user.home_country:
         await message.answer(
             lexicon.get('main_menu_greeting').format(first_name=hbold(message.from_user.first_name)),
-            reply_markup=kb.get_main_geo_settings(lexicon), parse_mode=ParseMode.HTML
         )
         return
     await start_onboarding_process(message, state, lexicon)

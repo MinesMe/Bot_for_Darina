@@ -13,6 +13,12 @@ EVENT_TYPE_EMOJI = {
     "Выставка": "🎨", "Фестиваль": "🎉",
 }
 
+RU_MONTH_NAMES = [
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+]
+
+
 # --- ОСНОВНЫЕ КЛАВИАТУРЫ ---
 def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
@@ -344,14 +350,18 @@ def get_month_choice_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     current_date = datetime.now()
     
-    try:
-        locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
-    except locale.Error:
-        locale.setlocale(locale.LC_TIME, '')
-
+    # УДАЛЕНО: Блок try-except с locale.setlocale()
+    
     for i in range(12):
         month_date = current_date + relativedelta(months=+i)
-        button_text = month_date.strftime("%B %Y").capitalize()
+        
+        # ИЗМЕНЕНИЕ: Получаем название месяца из нашего списка, а не через strftime
+        # month_date.month вернет число от 1 до 12. В списках индексация с 0, поэтому -1.
+        month_name = RU_MONTH_NAMES[month_date.month - 1]
+        
+        # Формируем текст для кнопки
+        button_text = f"{month_name} {month_date.strftime('%Y')}"
+        
         callback_data = month_date.strftime("select_month:%Y-%m")
         builder.button(text=button_text, callback_data=callback_data)
         
@@ -415,9 +425,10 @@ def get_single_favorite_manage_keyboard(artist_id: int, lexicon) -> InlineKeyboa
     """
     builder = InlineKeyboardBuilder()
     
+    # ИЗМЕНЕНИЕ: Меняем текст кнопки и ее callback_data для ясности
     builder.button(
-        text="🌍 Настроить общую мобильность",
-        callback_data="edit_general_mobility_from_fav"
+        text=lexicon.get('favorite_edit_regions_button'),
+        callback_data=f"edit_fav_regions:{artist_id}"
     )
     builder.button(
         text=lexicon.get('favorites_remove_button'),

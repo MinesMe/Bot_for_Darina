@@ -766,3 +766,23 @@ async def get_event_by_id(event_id: int) -> Event | None:
         # Используем session.get для простого поиска по первичному ключу
         result = await session.get(Event, event_id)
         return result
+    
+async def get_favorite_details(user_id: int, artist_id: int) -> UserFavorite | None:
+    """Получает детали одной записи из избранного (включая регионы)."""
+    async with async_session() as session:
+        stmt = select(UserFavorite).where(
+            and_(UserFavorite.user_id == user_id, UserFavorite.artist_id == artist_id)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+    
+async def update_favorite_regions(user_id: int, artist_id: int, new_regions: list):
+    """Обновляет регионы для конкретного избранного."""
+    async with async_session() as session:
+        stmt = (
+            update(UserFavorite)
+            .where(and_(UserFavorite.user_id == user_id, UserFavorite.artist_id == artist_id))
+            .values(regions=new_regions)
+        )
+        await session.execute(stmt)
+        await session.commit()

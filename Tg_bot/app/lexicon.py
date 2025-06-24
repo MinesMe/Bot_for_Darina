@@ -104,6 +104,9 @@ class Lexicon:
                 'back_to_favorites_menu_button': "⬅️ Назад в меню 'Избранное'",
                 'back_to_favorites_list_button': "⬅️ К списку избранного",
                 'favorites_added_final': "✅ Готово! Добавлено в избранное: {count} шт.",
+                'favorite_edit_regions_button': "✏️ Изменить регионы отслеживания",
+                'favorite_edit_regions_prompt': "Измените регионы отслеживания для: {artist_name}",
+                'favorite_regions_updated_alert': "✅ Регионы для избранного обновлены!",
 
                 'afisha_add_to_subs_button': "➕ Добавить в подписки",
                 'subs_enter_numbers_prompt': "Введите номера событий, которые хотите отслеживать, через запятую или пробел (например: 1, 3, 5).",
@@ -179,6 +182,9 @@ class Lexicon:
                 'mobility_saved_alert': "✅ General mobility settings saved!",
                 'favorites_list_prompt': "Your Favorites. Click on an artist/event to manage it:",
                 'favorite_artist_menu_prompt': "Manage favorite: {artist_name}",
+                'favorite_edit_regions_button': "✏️ Edit Tracking Regions",
+                'favorite_edit_regions_prompt': "Edit tracking regions for: {artist_name}",
+                'favorite_regions_updated_alert': "✅ Favorite's regions have been updated!",
 
                 'afisha_add_to_subs_button': "➕ Add to Subscriptions",
                 'subs_enter_numbers_prompt': "Enter the numbers of the events you want to track, separated by a comma or space (e.g., 1, 3, 5).",
