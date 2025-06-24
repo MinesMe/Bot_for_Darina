@@ -91,6 +91,8 @@ class Lexicon:
                 'favorites_menu_header_empty': "У вас пока нет избранных артистов или событий. Давайте добавим первого?",
                 'favorites_menu_header': "Ваше избранное:\n{favorites_list}",
                 'favorites_add_button': "➕ Добавить в избранное",
+                'favorites_list_prompt': "Ваше избранное. Нажмите на артиста/событие для управления им:",
+                'favorite_artist_menu_prompt': "Управление избранным: {artist_name}",
                 'favorites_remove_button': "🗑️ Удалить из избранного",
                 'favorites_enter_name_prompt': "Введите имя артиста, группы или название фестиваля, который хотите отслеживать:",
                 'favorites_not_found': "К сожалению, по вашему запросу ничего не найдено. Попробуйте еще раз или вернитесь назад.",
@@ -100,6 +102,7 @@ class Lexicon:
                 'favorites_removed_alert': "🗑️ Удалено из избранного.",
                 'favorites_remove_empty_alert': "У вас нет ничего в избранном для удаления.",
                 'back_to_favorites_menu_button': "⬅️ Назад в меню 'Избранное'",
+                'back_to_favorites_list_button': "⬅️ К списку избранного",
 
                 'afisha_add_to_subs_button': "➕ Добавить в подписки",
                 'subs_enter_numbers_prompt': "Введите номера событий, которые хотите отслеживать, через запятую или пробел (например: 1, 3, 5).",
@@ -108,6 +111,8 @@ class Lexicon:
                 'subs_no_valid_numbers_provided': "Вы не ввели ни одного корректного номера.",
                 'subs_nan_error': "Пожалуйста, вводите только числа.",
                 'subs_add_from_afisha_offer': "Вы можете добавить эти события в свои подписки.", # Текст перед кнопкой
+                'edit_mobility_prompt': "Измените свой список стран для 'общей мобильности'. Эти настройки будут применяться ко всем вашим избранным артистам по умолчанию.",
+                'mobility_saved_alert': "✅ Общие настройки мобильности сохранены!",
 
                 'subs_menu_header_active': "Вы отслеживаете следующие события.\nНажмите на любое, чтобы управлять им:",
                 'subs_menu_header_empty': "У вас нет активных подписок на события. Вы можете добавить их из 'Афиши'.",
@@ -168,6 +173,10 @@ class Lexicon:
                 'favorites_removed_alert': "🗑️ Removed from favorites.",
                 'favorites_remove_empty_alert': "You have nothing in your favorites to remove.",
                 'back_to_favorites_menu_button': "⬅️ Back to Favorites Menu",
+                'edit_mobility_prompt': "Edit your list of countries for 'general mobility'. These settings will apply to all your favorite artists by default.",
+                'mobility_saved_alert': "✅ General mobility settings saved!",
+                'favorites_list_prompt': "Your Favorites. Click on an artist/event to manage it:",
+                'favorite_artist_menu_prompt': "Manage favorite: {artist_name}",
 
                 'afisha_add_to_subs_button': "➕ Add to Subscriptions",
                 'subs_enter_numbers_prompt': "Enter the numbers of the events you want to track, separated by a comma or space (e.g., 1, 3, 5).",

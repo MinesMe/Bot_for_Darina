@@ -9,117 +9,158 @@ from aiogram.utils.markdown import hbold
 from ..database import requests as db
 from .. import keyboards as kb
 from ..lexicon import Lexicon
+from ..database.models import Artist
 
 router = Router()
 
 class FavoritesFSM(StatesGroup):
-    waiting_for_artist_name = State()
+    viewing_list = State()
+    viewing_artist = State()
+    editing_mobility = State()
 
-async def show_favorites_menu(message: Message, lexicon: Lexicon, favorites: list):
-    """Отображает список избранных артистов и кнопки управления."""
+# --- ХЕЛПЕРЫ ДЛЯ ПОКАЗА ЭКРАНОВ ---
+
+async def show_favorites_list(callback_or_message: Message | CallbackQuery, state: FSMContext):
+    """Отображает главный экран "Избранного" со списком артистов."""
+    await state.set_state(FavoritesFSM.viewing_list)
     
-    if not favorites:
-        text = lexicon.get('favorites_menu_header_empty')
-    else:
-        fav_list = "\n".join(f"⭐ {hbold(fav.name)}" for fav in favorites)
-        text = lexicon.get('favorites_menu_header').format(favorites_list=fav_list)
+    target_obj = callback_or_message.message if isinstance(callback_or_message, CallbackQuery) else callback_or_message
+    lexicon = Lexicon(callback_or_message.from_user.language_code)
+    print(target_obj.from_user.id)
+    favorites = await db.get_user_favorites(callback_or_message.from_user.id)
     
-    # ИЗМЕНЕНИЕ: Передаем `favorites` в клавиатуру, чтобы она знала, показывать ли кнопку "Удалить"
-    await message.answer(text, reply_markup=kb.get_favorites_menu_keyboard(lexicon, favorites), parse_mode="HTML")
+    
+    text = lexicon.get('favorites_list_prompt') if favorites else lexicon.get('favorites_menu_header_empty')
+    markup = kb.get_favorites_list_keyboard(favorites, lexicon)
+    
+    action = target_obj.edit_text if isinstance(callback_or_message, CallbackQuery) else target_obj.answer
+    try:
+        await action(text, reply_markup=markup, parse_mode="HTML")
+    except Exception:
+        await target_obj.answer(text, reply_markup=markup, parse_mode="HTML")
+
+    if isinstance(callback_or_message, CallbackQuery):
+        await callback_or_message.answer()
+
+async def show_single_favorite_menu(callback: CallbackQuery, state: FSMContext):
+    """Показывает меню управления для ОДНОГО артиста, ID которого берется из FSM."""
+    data = await state.get_data()
+    artist_id = data.get("current_artist_id")
+    if not artist_id:
+        await callback.answer("Ошибка: не удалось найти артиста. Возвращаю в список.", show_alert=True)
+        await show_favorites_list(callback, state)
+        return
+
+    async with db.async_session() as session:
+        artist = await session.get(Artist, artist_id)
+    
+    if not artist:
+        await callback.answer("Артист больше не найден в базе.", show_alert=True)
+        await show_favorites_list(callback, state)
+        return
+
+    await state.set_state(FavoritesFSM.viewing_artist)
+    lexicon = Lexicon(callback.from_user.language_code)
+    text = lexicon.get('favorite_artist_menu_prompt').format(artist_name=hbold(artist.name))
+    markup = kb.get_single_favorite_manage_keyboard(artist_id, lexicon)
+    
+    await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    await callback.answer()
+
+
+# --- ХЭНДЛЕРЫ ---
 
 @router.message(F.text.in_(["⭐ Избранное", "⭐ Favorites"]))
 async def menu_favorites(message: Message, state: FSMContext):
+    """Точка входа в раздел. Очищает состояние."""
     await state.clear()
-    lexicon = Lexicon(message.from_user.language_code)
-    # Делаем запрос здесь, в точке входа
-    user_favorites = await db.get_user_favorites(message.from_user.id)
-    await show_favorites_menu(message, lexicon, user_favorites)
+    await show_favorites_list(message, state)
 
-@router.callback_query(F.data == "add_to_favorites")
-async def cq_add_to_favorites_start(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(FavoritesFSM.waiting_for_artist_name)
-    lexicon = Lexicon(callback.from_user.language_code)
-    await callback.message.edit_text(lexicon.get('favorites_enter_name_prompt'))
-    await callback.answer()
-
-@router.message(FavoritesFSM.waiting_for_artist_name, F.text)
-async def process_favorite_artist_search(message: Message, state: FSMContext):
-    lexicon = Lexicon(message.from_user.language_code)
-    found_artists = await db.find_artists_fuzzy(message.text)
-    
-    if not found_artists:
-        await message.answer(
-            lexicon.get('favorites_not_found'),
-            reply_markup=kb.get_favorites_not_found_keyboard(lexicon)
-        )
-    else:
-        await message.answer(
-            lexicon.get('favorites_found_prompt'),
-            reply_markup=kb.get_found_artists_for_favorites_keyboard(found_artists, lexicon)
-        )
-
-@router.callback_query(F.data.startswith("add_fav_artist:"))
-async def cq_add_artist_to_favorites(callback: CallbackQuery, state: FSMContext):
-    """Добавляет выбранного артиста в избранное и обновляет меню."""
+@router.callback_query(FavoritesFSM.viewing_list, F.data.startswith("view_favorite:"))
+async def cq_view_favorite_artist(callback: CallbackQuery, state: FSMContext):
+    """Переход из общего списка в меню конкретного артиста."""
     artist_id = int(callback.data.split(":")[1])
-    user_id = callback.from_user.id
-    
-    # 1. Добавляем в базу
-    await db.add_artist_to_favorites(user_id=user_id, artist_id=artist_id)
-    
-    lexicon = Lexicon(callback.from_user.language_code)
-    await callback.answer(lexicon.get('favorites_added_alert'), show_alert=True)
-    await state.clear()
-    
-    # 2. ПОЛУЧАЕМ АКТУАЛЬНЫЙ СПИСОК ИЗБРАННОГО *ПОСЛЕ* ДОБАВЛЕНИЯ
-    updated_favorites = await db.get_user_favorites(user_id)
-    
-    # 3. Удаляем старое сообщение с кнопками
-    await callback.message.delete()
-    
-    # 4. Вызываем функцию показа меню с уже готовым, актуальным списком
-    await show_favorites_menu(callback.message, lexicon, updated_favorites)
+    # Сохраняем контекст в state
+    await state.update_data(current_artist_id=artist_id)
+    # Вызываем хелпер, который сам возьмет ID из state
+    await show_single_favorite_menu(callback, state)
 
-@router.callback_query(F.data == "remove_from_favorites")
-async def cq_remove_from_favorites_start(callback: CallbackQuery):
-    # Этот хэндлер работает нормально, так как он только читает данные
-    lexicon = Lexicon(callback.from_user.language_code)
-    favorites = await db.get_user_favorites(callback.from_user.id)
-    if not favorites:
-        await callback.answer(lexicon.get('favorites_remove_empty_alert'), show_alert=True)
-        return
+@router.callback_query(F.data == "back_to_favorites_list")
+async def cq_back_to_favorites_list(callback: CallbackQuery, state: FSMContext):
+    """Возврат из меню артиста в общий список."""
+    await show_favorites_list(callback, state)
 
-    await callback.message.edit_text(
-        lexicon.get('favorites_remove_prompt'),
-        reply_markup=kb.get_remove_from_favorites_keyboard(favorites, lexicon)
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("remove_fav_artist:"))
-async def cq_remove_artist_from_favorites(callback: CallbackQuery, state: FSMContext):
-    """Удаляет выбранного артиста и обновляет меню."""
-    artist_id = int(callback.data.split(":")[1])
-    user_id = callback.from_user.id
-    
-    # 1. Удаляем из базы
-    await db.remove_artist_from_favorites(user_id=user_id, artist_id=artist_id)
+@router.callback_query(FavoritesFSM.viewing_artist, F.data.startswith("delete_favorite:"))
+async def cq_delete_favorite_artist(callback: CallbackQuery, state: FSMContext):
+    """Удаляет артиста и возвращает в обновленный общий список."""
+    data = await state.get_data()
+    artist_id = data.get("current_artist_id")
+    await db.remove_artist_from_favorites(user_id=callback.from_user.id, artist_id=artist_id)
     
     lexicon = Lexicon(callback.from_user.language_code)
     await callback.answer(lexicon.get('favorites_removed_alert'), show_alert=True)
-    
-    # 2. ПОЛУЧАЕМ АКТУАЛЬНЫЙ СПИСОК *ПОСЛЕ* УДАЛЕНИЯ
-    updated_favorites = await db.get_user_favorites(user_id)
-    
-    # 3. Удаляем старое сообщение с кнопками
-    await callback.message.delete()
-    
-    # 4. Вызываем функцию показа меню с актуальным списком
-    await show_favorites_menu(callback.message, lexicon, updated_favorites) 
-    
-@router.callback_query(F.data == "back_to_favorites_menu")
-async def cq_back_to_favorites_menu(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.delete()
+    await show_favorites_list(callback, state)
+
+# --- ХЭНДЛЕРЫ РЕДАКТИРОВАНИЯ МОБИЛЬНОСТИ ---
+
+@router.callback_query(FavoritesFSM.viewing_artist, F.data == "edit_general_mobility_from_fav")
+async def cq_edit_general_mobility_from_fav(callback: CallbackQuery, state: FSMContext):
+    """Переход из меню артиста в редактирование мобильности."""
+    await state.set_state(FavoritesFSM.editing_mobility)
+    current_regions = await db.get_general_mobility(callback.from_user.id) or []
+    await state.update_data(selected_regions=current_regions)
+    all_countries = await db.get_countries()
     lexicon = Lexicon(callback.from_user.language_code)
-    user_favorites = await db.get_user_favorites(callback.from_user.id)
-    await show_favorites_menu(callback.message, lexicon, user_favorites)
+    
+    await callback.message.edit_text(
+        lexicon.get('edit_mobility_prompt'),
+        reply_markup=kb.get_region_selection_keyboard(
+            all_countries, current_regions,
+            finish_callback="finish_mobility_edit_from_fav",
+            back_callback="back_to_single_favorite_view"
+        )
+    )
+    await callback.answer()
+
+@router.callback_query(FavoritesFSM.editing_mobility, F.data.startswith("toggle_region:"))
+async def cq_toggle_mobility_region_from_fav(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора/снятия региона."""
+    region_name = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected = data.get("selected_regions", [])
+    
+    if region_name in selected:
+        selected.remove(region_name)
+    else:
+        selected.append(region_name)
+        
+    await state.update_data(selected_regions=selected)
+    all_countries = await db.get_countries()
+    
+    await callback.message.edit_reply_markup(
+        reply_markup=kb.get_region_selection_keyboard(
+            all_countries, selected,
+            finish_callback="finish_mobility_edit_from_fav",
+            back_callback="back_to_single_favorite_view"
+        )
+    )
+    await callback.answer()
+
+@router.callback_query(FavoritesFSM.editing_mobility, F.data == "finish_mobility_edit_from_fav")
+async def cq_finish_mobility_edit_from_fav(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет настройки мобильности и возвращает в меню артиста."""
+    data = await state.get_data()
+    regions = data.get("selected_regions", [])
+    await db.set_general_mobility(callback.from_user.id, regions)
+    
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.answer(lexicon.get('mobility_saved_alert'), show_alert=True)
+    
+    # Возвращаемся в меню артиста
+    await show_single_favorite_menu(callback, state)
+
+@router.callback_query(FavoritesFSM.editing_mobility, F.data == "back_to_single_favorite_view")
+async def cq_back_to_single_favorite(callback: CallbackQuery, state: FSMContext):
+    """Возврат из редактирования мобильности в меню артиста."""
+    # Просто вызываем хелпер, который сам возьмет ID из state и все отрисует
+    await show_single_favorite_menu(callback, state)

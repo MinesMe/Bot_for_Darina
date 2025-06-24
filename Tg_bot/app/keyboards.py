@@ -180,17 +180,26 @@ def get_general_onboarding_keyboard() -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
-def get_region_selection_keyboard(all_countries: list, selected_regions: list, finish_callback: str) -> InlineKeyboardMarkup:
+def get_region_selection_keyboard(
+    all_countries: list, 
+    selected_regions: list, 
+    finish_callback: str,
+    back_callback: str  # <--- Просто добавляем этот параметр
+) -> InlineKeyboardMarkup:
     """
     Универсальная клавиатура для выбора стран.
-    Принимает finish_callback для кнопки 'Готово', чтобы работать в разных контекстах.
+    Принимает finish_callback для кнопки 'Готово' и back_callback для кнопки 'Назад'.
     """
     builder = InlineKeyboardBuilder()
     for country in all_countries:
         text = f"✅ {country}" if country in selected_regions else f"⬜️ {country}"
         builder.button(text=text, callback_data=f"toggle_region:{country}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="✅ Готово", callback_data=finish_callback))
+    builder.row(InlineKeyboardButton(text="✅ Готово", callback_data=finish_callback))  
+    
+    # ИЗМЕНЕНИЕ: Добавляем кнопку "Назад" с переданным callback_, вы правы. Прошу прощения, я усложнил иdata
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback))
+    
     return builder.as_markup()
 
 
@@ -354,35 +363,90 @@ def get_filter_type_choice_keyboard(lexicon) -> InlineKeyboardMarkup:
 
 # --- НОВЫЙ БЛОК: Клавиатуры для раздела "Избранное" ---
 
-def get_favorites_menu_keyboard(lexicon, favorites: list) -> InlineKeyboardMarkup:
+def get_favorites_menu_keyboard( favorites: list, lexicon) -> InlineKeyboardMarkup:
     """Генерирует клавиатуру для главного меню 'Избранное'."""
     builder = InlineKeyboardBuilder()
-    builder.button(text=lexicon.get('favorites_add_button'), callback_data="add_to_favorites")
+    
     if favorites:
-        builder.button(text=lexicon.get('favorites_remove_button'), callback_data="remove_from_favorites")
-    builder.adjust(1)
+        for fav in favorites:
+            # Обрезаем текст кнопки, чтобы избежать ошибки Telegram
+            button_text = fav.name[:40] + '...' if len(fav.name) > 40 else fav.name
+            builder.button(text=f"⭐ {button_text}", callback_data=f"view_favorite:{fav.artist_id}")
+        builder.adjust(1)
+    
+    # Кнопка "Добавить" переехала в другой модуль.
+    # Кнопка "Настроить мобильность" теперь в меню управления конкретным артистом.
+    
     return builder.as_markup()
 
-def get_found_artists_for_favorites_keyboard(artists: list, lexicon) -> InlineKeyboardMarkup:
-    """Показывает найденных артистов для добавления в избранное."""
+def get_favorites_list_keyboard(favorites: list, lexicon) -> InlineKeyboardMarkup:
+    """
+    Генерирует клавиатуру со списком избранных артистов.
+    Каждый артист - это кнопка для перехода в меню управления.
+    """
     builder = InlineKeyboardBuilder()
-    for artist in artists:
-        builder.button(text=artist.name, callback_data=f"add_fav_artist:{artist.artist_id}")
-    builder.adjust(1)
-    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu"))
+    
+    # Создаем кнопки для каждого избранного артиста
+    if favorites:
+        for fav in favorites:
+            # Обрезаем длинные названия, чтобы избежать ошибки Telegram
+            button_text = fav.name[:40] + '...' if len(fav.name) > 40 else fav.name
+            builder.button(text=f"⭐ {button_text}", callback_data=f"view_favorite:{fav.artist_id}")
+        
+        # Располагаем каждую кнопку с артистом на новой строке
+        builder.adjust(1)
+    
+    # Кнопка "Добавить" находится в другом разделе ("Найти/добавить артиста")
+    # Кнопка "Настроить мобильность" находится глубже, в меню конкретного артиста
+    # Поэтому здесь больше нет никаких кнопок действий.
+    
     return builder.as_markup()
 
-def get_favorites_not_found_keyboard(lexicon) -> InlineKeyboardMarkup:
-    """Клавиатура на случай, если поиск по избранному ничего не дал."""
+def get_single_favorite_manage_keyboard(artist_id: int, lexicon) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру для управления одним конкретным избранным артистом.
+    """
     builder = InlineKeyboardBuilder()
-    builder.button(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu")
+    
+    builder.button(
+        text="🌍 Настроить общую мобильность",
+        callback_data="edit_general_mobility_from_fav"
+    )
+    builder.button(
+        text=lexicon.get('favorites_remove_button'),
+        callback_data=f"delete_favorite:{artist_id}"
+    )
+    
+    builder.adjust(1)
+    
+    builder.row(
+        InlineKeyboardButton(
+            text=lexicon.get('back_to_favorites_list_button'),
+            callback_data="back_to_favorites_list"
+        )
+    )
     return builder.as_markup()
 
-def get_remove_from_favorites_keyboard(favorites: list, lexicon ) -> InlineKeyboardMarkup:
-    """Показывает список избранных, где каждая кнопка - для удаления."""
-    builder = InlineKeyboardBuilder()
-    for fav in favorites:
-        builder.button(text=f"🗑️ {fav.name}", callback_data=f"remove_fav_artist:{fav.artist_id}")
-    builder.adjust(1)
-    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu"))
-    return builder.as_markup()
+# def get_found_artists_for_favorites_keyboard(artists: list, lexicon) -> InlineKeyboardMarkup:
+#     """Показывает найденных артистов для добавления в избранное."""
+#     builder = InlineKeyboardBuilder()
+#     for artist in artists:
+#         builder.button(text=artist.name, callback_data=f"add_fav_artist:{artist.artist_id}")
+#     builder.adjust(1)
+#     builder.row(InlineKeyboardButton(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu"))
+#     return builder.as_markup()
+
+# def get_favorites_not_found_keyboard(lexicon) -> InlineKeyboardMarkup:
+#     """Клавиатура на случай, если поиск по избранному ничего не дал."""
+#     builder = InlineKeyboardBuilder()
+#     builder.button(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu")
+#     return builder.as_markup()
+
+# def get_remove_from_favorites_keyboard(favorites: list, lexicon ) -> InlineKeyboardMarkup:
+#     """Показывает список избранных, где каждая кнопка - для удаления."""
+#     builder = InlineKeyboardBuilder()
+#     for fav in favorites:
+#         builder.button(text=f"🗑️ {fav.name}", callback_data=f"remove_fav_artist:{fav.artist_id}")
+#     builder.adjust(1)
+#     builder.row(InlineKeyboardButton(text=lexicon.get('back_to_favorites_menu_button'), callback_data="back_to_favorites_menu"))
+#     return builder.as_markup()
