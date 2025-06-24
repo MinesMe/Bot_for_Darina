@@ -139,6 +139,7 @@ async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMCo
 
 @router.callback_query(F.data == "cancel_add_to_fav")
 async def cq_cancel_add_process(callback: CallbackQuery, state: FSMContext):
+    print('here')
     """Отменяет процесс добавления и возвращает в главное меню."""
     await state.clear()
     lexicon = Lexicon(callback.from_user.language_code)
@@ -165,7 +166,7 @@ async def handle_setup_general_mobility_again(callback: CallbackQuery, state: FS
         "Отлично! Выбери страны, которые войдут в твою 'общую мобильность'.",
         # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, [], finish_callback="finish_general_selection", back_callback="write_artist"
+            all_countries, [], finish_callback="finish_general_selection", back_callback="cancel_add_to_fav"
         )
     )
     await callback.answer()
@@ -183,7 +184,7 @@ async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContex
     all_countries = await db.get_countries()
     # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
     await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, finish_callback="finish_general_selection",  back_callback="setup_general_mobility" )
+        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, finish_callback="finish_general_selection",  back_callback="cancel_add_to_fav" )
     )
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "finish_adding_subscriptions")
@@ -329,6 +330,26 @@ async def show_add_more_or_finish(message: Message, state: FSMContext):
     
     await state.set_state(SubscriptionFlow.waiting_for_action)
     await message.edit_text(text, reply_markup=kb.get_add_more_or_finish_keyboard(), parse_mode="HTML")
+
+@router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "finish_general_selection")
+async def cq_finish_general_selection(callback: CallbackQuery, state: FSMContext):
+    """Завершение настройки общей мобильности."""
+    data = await state.get_data()
+    regions = data.get("selected_regions", [])
+
+    # if not regions: # Можно раскомментировать, если нужно
+    #     await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
+    #     return
+
+    await db.set_general_mobility(callback.from_user.id, regions)
+    await callback.answer("✅ Общие настройки мобильности сохранены!", show_alert=True)
+    
+    # Возвращаемся к выбору действия
+    await state.set_state(SubscriptionFlow.waiting_for_action)
+    await callback.message.edit_text(
+        "Отлично! Теперь напиши исполнителя/событие или импортируй их.",
+        reply_markup=kb.get_add_sub_action_keyboard()
+    )
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "finish_adding_subscriptions")
 async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext):
