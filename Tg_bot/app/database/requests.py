@@ -67,30 +67,33 @@ async def get_user_preferences(user_id: int) -> dict | None:
 async def get_user_favorites(user_id: int) -> list[Artist]:
     """Получает список всех "Объектов интереса" (Артистов) из избранного пользователя."""
     async with async_session() as session:
+        # ИЗМЕНЕНИЕ: Используем явное условие для JOIN
         stmt = (
             select(Artist)
-            .join(UserFavorite)
+            .join(UserFavorite, Artist.artist_id == UserFavorite.artist_id)
             .where(UserFavorite.user_id == user_id)
             .order_by(Artist.name)
         )
         result = await session.execute(stmt)
         return result.scalars().all()
 
-async def add_artist_to_favorites(user_id: int, artist_id: int):
+async def add_artist_to_favorites(session,user_id: int, artist_id: int, regions:list):
     """Добавляет "Объект интереса" (Артиста) в избранное пользователя."""
-    async with async_session() as session:
+    
     # Убираем `async with`, так как сессия передается извне
-        existing_stmt = select(UserFavorite).where(
-            and_(UserFavorite.user_id == user_id, UserFavorite.artist_id == artist_id)
-        )
-        existing = (await session.execute(existing_stmt)).scalar_one_or_none()
+    existing_stmt = select(UserFavorite).where(
+    and_(UserFavorite.user_id == user_id, UserFavorite.artist_id == artist_id)
+    )
+    existing = (await session.execute(existing_stmt)).scalar_one_or_none()
+    
+    if not existing:
+        # Если нет - создаем новую запись с регионами
+        new_favorite = UserFavorite(user_id=user_id, artist_id=artist_id, regions=regions)
+        session.add(new_favorite)
+    else:
+        # Если уже есть - просто обновляем регионы
+        existing.regions = regions
         
-        if not existing:
-            new_favorite = UserFavorite(user_id=user_id, artist_id=artist_id)
-            session.add(new_favorite)
-            # Коммит будет сделан в хэндлере, если нужно, или здесь, если каждая операция атомарна.
-            # Для массового добавления лучше коммитить в конце. Но для простоты оставим коммит здесь.
-            await session.commit()
 
 async def remove_artist_from_favorites(user_id: int, artist_id: int):
     """

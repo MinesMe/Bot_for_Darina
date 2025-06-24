@@ -61,7 +61,7 @@ class Artist(Base):
     # Эта связь показывает, в каких событиях участвует "артист"
     events = relationship("EventArtist", back_populates="artist")
     # НОВАЯ СВЯЗЬ: Пользователи, добавившие этого "артиста" в "Избранное"
-    favorited_by_users = relationship("User", secondary="user_favorites", back_populates="favorite_artists")
+    user_associations = relationship("UserFavorite", back_populates="artist", cascade="all, delete-orphan")
 
 class Venue(Base):
     __tablename__ = "venues"
@@ -126,7 +126,7 @@ class User(Base):
     general_geo_completed = Column(Boolean, default=False, nullable=False)
     general_mobility_regions = Column(JSON, nullable=True)
     # НОВАЯ СВЯЗЬ: "Избранные" артисты/объекты интереса
-    favorite_artists = relationship("Artist", secondary="user_favorites", back_populates="favorited_by_users")
+    favorites = relationship("UserFavorite", back_populates="user", cascade="all, delete-orphan")
 
 # --- ИЗМЕНЕНИЕ 2: Таблица Subscription теперь для КОНКРЕТНЫХ СОБЫТИЙ ---
 # Мы полностью меняем назначение этой таблицы.
@@ -144,6 +144,7 @@ class Subscription(Base):
     deletion_reason = Column(Text, nullable=True)
 
     event = relationship("Event", back_populates="subscriptions")
+    user = relationship("User")
 
 # --- ИЗМЕНЕНИЕ 3: НОВАЯ таблица для "Избранного" (многие-ко-многим) ---
 # Эта таблица связывает Пользователей и их "Объекты интереса" (Артистов)
@@ -151,6 +152,11 @@ class UserFavorite(Base):
     __tablename__ = 'user_favorites'
     user_id = Column(BigInteger, ForeignKey('users.user_id', ondelete='CASCADE'), primary_key=True)
     artist_id = Column(Integer, ForeignKey('artists.artist_id', ondelete='CASCADE'), primary_key=True)
+    regions = Column(JSON, nullable=False)
+    
+    # Добавляем связи для удобства (опционально, но полезно)
+    user = relationship("User", back_populates="favorites")
+    artist = relationship("Artist", back_populates="user_associations")
 
 
 SQL_CREATE_TRIGGER_FUNCTION = """

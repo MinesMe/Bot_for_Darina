@@ -48,7 +48,7 @@ async def menu_add_subscriptions(message: Message, state: FSMContext):
         # Пользователь уже проходил онбординг.
         general_mobility_regions = await db.get_general_mobility(user_id)
         await state.set_state(SubscriptionFlow.waiting_for_action)
-        await state.update_data(pending_subscriptions=[])
+        await state.update_data(pending_favorites=[])
 
         if not general_mobility_regions:
             # Случай 2: Онбординг пройден, но мобильность не настроена (пропущена).
@@ -88,7 +88,7 @@ async def start_subscription_add_flow(callback: CallbackQuery, state: FSMContext
         )
     else:
         await state.set_state(SubscriptionFlow.waiting_for_action)
-        await state.update_data(pending_subscriptions=[])
+        await state.update_data(pending_favorites=[])
         await callback.message.edit_text(
             "Напиши исполнителя/событие для отслеживания. Также я могу импортировать их.",
             reply_markup=kb.get_add_sub_action_keyboard()
@@ -131,7 +131,7 @@ async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMCo
         )
     else: # skip_general_mobility
         await state.set_state(SubscriptionFlow.waiting_for_action)
-        await state.update_data(pending_subscriptions=[])
+        await state.update_data(pending_favorites=[])
         await callback.message.edit_text(
             "Хорошо. Теперь напиши исполнителя/событие для отслеживания или импортируй их.",
             reply_markup=kb.get_add_sub_action_keyboard()
@@ -191,7 +191,7 @@ async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContex
 async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext):
     """Завершает сессию и сохраняет все в ИЗБРАННОЕ."""
     data = await state.get_data()
-    pending_items = data.get('pending_subscriptions', [])
+    pending_items = data.get('pending_favorites', [])
 
     if not pending_items:
         await callback.answer("Вы ничего не добавили в очередь.", show_alert=True)
@@ -201,12 +201,14 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
     async with db.async_session() as session:
         for item_data in pending_items:
             artist_name = item_data['item_name']
+            regions_to_save = item_data['regions']
             artist_obj_stmt = select(db.Artist).where(db.Artist.name == artist_name)
             artist = (await session.execute(artist_obj_stmt)).scalar_one_or_none()
             if artist:
                 # Вызываем функцию добавления в избранное
-                await db.add_artist_to_favorites(callback.from_user.id, artist.artist_id)
+                await db.add_artist_to_favorites(session, callback.from_user.id, artist.artist_id, regions_to_save)
                 added_artist_names.append(artist.name)
+        await session.commit()
 
     await state.clear()
 
@@ -266,11 +268,11 @@ async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
 async def handle_mobility_type_choice(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     artist_name = data.get('current_artist')
-    pending_subs = data.get('pending_subscriptions', [])
+    pending_subs = data.get('pending_favorites', [])
     if callback.data == 'use_general_mobility':
         regions = await db.get_general_mobility(callback.from_user.id)
         pending_subs.append({"item_name": artist_name, "category": "music", "regions": regions})
-        await state.update_data(pending_subscriptions=pending_subs)
+        await state.update_data(pending_favorites=pending_subs)
         await callback.answer(f"Артист {artist_name} добавлен с общими настройками.", show_alert=True)
         await show_add_more_or_finish(callback.message, state)
     else:
@@ -306,14 +308,14 @@ async def cq_finish_custom_selection(callback: CallbackQuery, state: FSMContext)
     data = await state.get_data()
     regions = data.get("selected_regions", [])
     artist_name = data.get('current_artist')
-    pending_subs = data.get('pending_subscriptions', [])
+    pending_subs = data.get('pending_favorites', [])
 
     if not regions:
         await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
         return
     
     pending_subs.append({"item_name": artist_name, "category": "music", "regions": regions})
-    await state.update_data(pending_subscriptions=pending_subs)
+    await state.update_data(pending_favorites=pending_subs)
     await callback.answer(f"Артист {artist_name} добавлен с кастомными настройками.", show_alert=True)
 
     await show_add_more_or_finish(callback.message, state)
@@ -321,7 +323,7 @@ async def cq_finish_custom_selection(callback: CallbackQuery, state: FSMContext)
 async def show_add_more_or_finish(message: Message, state: FSMContext):
     """Показывает клавиатуру 'Добавить еще' / 'Готово'."""
     data = await state.get_data()
-    pending_subs = data.get('pending_subscriptions', [])
+    pending_subs = data.get('pending_favorites', [])
     text = "Подписка добавлена в очередь на сохранение.\n"
     if pending_subs:
         text += "\n<b>Очередь на добавление:</b>\n"
@@ -350,57 +352,6 @@ async def cq_finish_general_selection(callback: CallbackQuery, state: FSMContext
         "Отлично! Теперь напиши исполнителя/событие или импортируй их.",
         reply_markup=kb.get_add_sub_action_keyboard()
     )
-
-@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "finish_adding_subscriptions")
-async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext):
-    """
-    Завершает сессию и сохраняет все накопленные
-    объекты в ИЗБРАННОЕ (UserFavorite).
-    """
-    data = await state.get_data()
-    pending_items = data.get('pending_subscriptions', [])
-
-    if not pending_items:
-        await callback.answer("Вы ничего не добавили в очередь.", show_alert=True)
-        return
-
-    # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ЛОГИКИ ---
-    
-    added_artist_names = []
-    
-    # Открываем одну сессию для всех операций
-    async with db.async_session() as session:
-        for item_data in pending_items:
-            # Извлекаем имя артиста, которое мы сохраняли на предыдущих шагах
-            artist_name = item_data['item_name']
-            
-            # Находим объект Artist по имени, чтобы получить его ID
-            artist_obj_stmt = select(db.Artist).where(db.Artist.name == artist_name)
-            artist = (await session.execute(artist_obj_stmt)).scalar_one_or_none()
-            
-            if artist:
-                # Вызываем функцию добавления в избранное
-                # Передаем session, чтобы все происходило в одной транзакции
-                await db.add_artist_to_favorites(callback.from_user.id, artist.artist_id)
-                added_artist_names.append(artist.name)
-    
-    await state.clear()
-
-    # Формируем финальное сообщение
-    lexicon = Lexicon(callback.from_user.language_code)
-    if added_artist_names:
-        final_text = lexicon.get('favorites_added_final').format(
-            count=len(added_artist_names)
-        )
-        # Можно добавить список, если хотите
-        # for name in added_artist_names:
-        #     final_text += f"\n⭐ {hbold(name)}"
-        
-        await callback.message.edit_text(final_text, parse_mode="HTML")
-    else:
-        await callback.message.edit_text("Не удалось добавить выбранных артистов. Попробуйте снова.")
-
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("unsubscribe:"))
