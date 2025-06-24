@@ -79,15 +79,17 @@ async def get_user_favorites(user_id: int) -> list[Artist]:
 async def add_artist_to_favorites(user_id: int, artist_id: int):
     """Добавляет "Объект интереса" (Артиста) в избранное пользователя."""
     async with async_session() as session:
-        # Проверяем, нет ли уже такой записи, чтобы избежать ошибок уникальности
-        existing = await session.execute(
-            select(UserFavorite).where(
-                and_(UserFavorite.user_id == user_id, UserFavorite.artist_id == artist_id)
-            )
+    # Убираем `async with`, так как сессия передается извне
+        existing_stmt = select(UserFavorite).where(
+            and_(UserFavorite.user_id == user_id, UserFavorite.artist_id == artist_id)
         )
-        if not existing.scalar_one_or_none():
+        existing = (await session.execute(existing_stmt)).scalar_one_or_none()
+        
+        if not existing:
             new_favorite = UserFavorite(user_id=user_id, artist_id=artist_id)
             session.add(new_favorite)
+            # Коммит будет сделан в хэндлере, если нужно, или здесь, если каждая операция атомарна.
+            # Для массового добавления лучше коммитить в конце. Но для простоты оставим коммит здесь.
             await session.commit()
 
 async def remove_artist_from_favorites(user_id: int, artist_id: int):

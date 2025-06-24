@@ -103,6 +103,7 @@ class Lexicon:
                 'favorites_remove_empty_alert': "У вас нет ничего в избранном для удаления.",
                 'back_to_favorites_menu_button': "⬅️ Назад в меню 'Избранное'",
                 'back_to_favorites_list_button': "⬅️ К списку избранного",
+                'favorites_added_final': "✅ Готово! Добавлено в избранное: {count} шт.",
 
                 'afisha_add_to_subs_button': "➕ Добавить в подписки",
                 'subs_enter_numbers_prompt': "Введите номера событий, которые хотите отслеживать, через запятую или пробел (например: 1, 3, 5).",
@@ -113,6 +114,7 @@ class Lexicon:
                 'subs_add_from_afisha_offer': "Вы можете добавить эти события в свои подписки.", # Текст перед кнопкой
                 'edit_mobility_prompt': "Измените свой список стран для 'общей мобильности'. Эти настройки будут применяться ко всем вашим избранным артистам по умолчанию.",
                 'mobility_saved_alert': "✅ Общие настройки мобильности сохранены!",
+                
 
                 'subs_menu_header_active': "Вы отслеживаете следующие события.\nНажмите на любое, чтобы управлять им:",
                 'subs_menu_header_empty': "У вас нет активных подписок на события. Вы можете добавить их из 'Афиши'.",
@@ -185,7 +187,7 @@ class Lexicon:
                 'subs_no_valid_numbers_provided': "You did not provide any valid numbers.",
                 'subs_nan_error': "Please enter numbers only.",
                 'subs_add_from_afisha_offer': "You can add these events to your subscriptions.", # Текст перед кнопкой
-
+                'favorites_added_final': "✅ Done! Added to favorites: {count} item(s).",
                 'back_button': "⬅️ Back",
     
                 # --- ДОБАВИТЬ ЭТОТ БЛОК (АНГЛ.) ---

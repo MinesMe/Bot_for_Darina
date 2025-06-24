@@ -217,7 +217,8 @@ async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
             all_countries, 
             current_regions, 
             # Используем простой и уникальный callback
-            finish_callback="finish_mobility_edit"
+            finish_callback="finish_mobility_edit",
+            back_callback="back_to_profile" 
         )
     )
     await callback.answer()
@@ -370,7 +371,7 @@ async def cq_toggle_mobility_region(callback: CallbackQuery, state: FSMContext):
     # Перерисовываем клавиатуру с тем же уникальным callback
     await callback.message.edit_reply_markup(
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, selected, finish_callback="finish_mobility_edit"
+            all_countries, selected, finish_callback="finish_mobility_edit", back_callback="back_to_profile"
         )
     )
     await callback.answer()

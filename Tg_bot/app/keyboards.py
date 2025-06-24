@@ -248,8 +248,15 @@ def found_artists_keyboard(artists: list) -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     for artist in artists:
-        builder.button(text=f"{artist}", callback_data=f"subscribe_to_artist:{artist}")
+        # ИЗМЕНЕНИЕ: Обрезаем текст кнопки, чтобы избежать ошибки
+        button_text = artist.name[:40] + '...' if len(artist.name) > 40 else artist.name
+        
+        # ИЗМЕНЕНИЕ: Возвращаем callback_data к вашему формату, который ожидает хэндлер
+        # Передаем ИМЯ артиста, а не ID
+        builder.button(text=button_text, callback_data=f"subscribe_to_artist:{artist.name}")
+        
     builder.adjust(1)
+    # ИЗМЕНЕНИЕ: Возвращаем callback_data для кнопки "Отмена" к вашему формату
     builder.row(InlineKeyboardButton(text="Отмена", callback_data="cancel_artist_search"))
     return builder.as_markup()
 
