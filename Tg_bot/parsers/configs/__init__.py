@@ -23,22 +23,22 @@ from .yandex_by_concert import CONFIG as yandex_by_concert_config
 
 ALL_CONFIGS = [
     # ... (все старые конфиги) ...
-    kvitki_by_music_config,
-    kvitki_by_theatre_config,
-    kvitki_by_bolshoi_theatre_config,
-    kvitki_by_circus_config,
-    kvitki_by_sport_config,
-    kvitki_by_kz_minsk_config,
-    bezkassira_by_sport_config,
-    liveball_by_sport_config,
-    liveball_by_basketball_config,
-    liveball_by_hockey_config,
+    # kvitki_by_music_config,
+    # kvitki_by_theatre_config,
+    # kvitki_by_bolshoi_theatre_config,
+    # kvitki_by_circus_config,
+    # kvitki_by_sport_config,
+    # kvitki_by_kz_minsk_config,
+    # bezkassira_by_sport_config,
+    # liveball_by_sport_config,
+    # liveball_by_basketball_config,
+    # liveball_by_hockey_config,
 
     # --- НОВОЕ: Добавляем конфиги Яндекса в общий список ---
-    # yandex_by_sport_config,
-    # yandex_by_festival_config,
-    # yandex_by_art_config,
-    # yandex_by_theatre_config,
-    # yandex_by_cinema_config,
-    # yandex_by_concert_config,
+    yandex_by_sport_config,
+    yandex_by_festival_config,
+    yandex_by_art_config,
+    yandex_by_theatre_config,
+    yandex_by_cinema_config,
+    yandex_by_concert_config,
 ]

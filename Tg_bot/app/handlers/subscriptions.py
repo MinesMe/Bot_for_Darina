@@ -242,13 +242,24 @@ async def process_artist_search(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("subscribe_to_artist:"))
 async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
-    artist_name = callback.data.split(":", 1)[1]
-    await state.update_data(current_artist=artist_name)
+    artist_id = int(callback.data.split(":", 1)[1])
+    
+    # Нам нужно получить имя артиста для сообщений пользователю
+    async with db.async_session() as session:
+        artist = await session.get(db.Artist, artist_id)
+    
+    if not artist:
+        await callback.answer("Ошибка: артист не найден.", show_alert=True)
+        return
+
+    # Сохраняем в state и ID, и имя
+    await state.update_data(current_artist_id=artist.artist_id, current_artist=artist.name)
+    
     general_mobility = await db.get_general_mobility(callback.from_user.id)
     if general_mobility:
         await state.set_state(SubscriptionFlow.choosing_mobility_type)
         await callback.message.edit_text(
-            f"Артист: {hbold(artist_name)}. Хотите добавить страны для отслеживания конкретно для этой подписки или использовать общие настройки?",
+            f"Артист: {hbold(artist.name)}. Хотите добавить страны для отслеживания конкретно для этой подписки или использовать общие настройки?",
             reply_markup=kb.get_mobility_type_choice_keyboard(),
             parse_mode="HTML"
         )
@@ -257,9 +268,12 @@ async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
         await state.update_data(selected_regions=[])
         all_countries = await db.get_countries()
         await callback.message.edit_text(
-            f"Артист: {hbold(artist_name)}. Укажите страны для отслеживания.",
-            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-            reply_markup=kb.get_region_selection_keyboard(all_countries, [], finish_callback="finish_custom_selection", back_callback="cancel_artist_search"),
+            f"Артист: {hbold(artist.name)}. Укажите страны для отслеживания.",
+            reply_markup=kb.get_region_selection_keyboard(
+                all_countries, [], 
+                finish_callback="finish_custom_selection",
+                back_callback="cancel_artist_search"
+            ),
             parse_mode="HTML"
         )
     await callback.answer()

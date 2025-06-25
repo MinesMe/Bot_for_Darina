@@ -28,7 +28,7 @@ def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
     )
     builder.row(
         KeyboardButton(text=lexicon.get('main_menu_button_profile')),
-         KeyboardButton(text="⭐ Избранное") 
+        KeyboardButton(text=lexicon.get('main_menu_button_favorites')),
     )
     return builder.as_markup(resize_keyboard=True)
 
@@ -248,21 +248,20 @@ def get_add_more_or_finish_keyboard(show_setup_mobility_button: bool = False) ->
 
 # --- ОСТАЛЬНЫЕ КЛАВИАТУРЫ ---
 
-def found_artists_keyboard(artists: list) -> InlineKeyboardMarkup:
+def found_artists_keyboard(artists) -> InlineKeyboardMarkup:
     """
     Показывает найденных артистов для подписки.
+    ИЗМЕНЕНИЕ: Использует ID артиста в callback_data.
     """
     builder = InlineKeyboardBuilder()
     for artist in artists:
-        # ИЗМЕНЕНИЕ: Обрезаем текст кнопки, чтобы избежать ошибки
+        # Текст кнопки по-прежнему обрезаем на всякий случай
         button_text = artist.name[:40] + '...' if len(artist.name) > 40 else artist.name
         
-        # ИЗМЕНЕНИЕ: Возвращаем callback_data к вашему формату, который ожидает хэндлер
-        # Передаем ИМЯ артиста, а не ID
-        builder.button(text=button_text, callback_data=f"subscribe_to_artist:{artist.name}")
+        # ИЗМЕНЕНИЕ: В callback_data передаем ID, а не имя
+        builder.button(text=button_text, callback_data=f"subscribe_to_artist:{artist.artist_id}")
         
     builder.adjust(1)
-    # ИЗМЕНЕНИЕ: Возвращаем callback_data для кнопки "Отмена" к вашему формату
     builder.row(InlineKeyboardButton(text="Отмена", callback_data="cancel_artist_search"))
     return builder.as_markup()
 

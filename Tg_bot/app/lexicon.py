@@ -133,6 +133,8 @@ class Lexicon:
                 'back_to_subscriptions_list_button': "⬅️ К списку подписок",
                 'back_to_profile_button': "⬅️ Назад ",
 
+                'subs_reminder_header': "🔔 **Напоминание о ваших подписках:**",
+
                 
             },
             'be': {
@@ -145,14 +147,14 @@ class Lexicon:
             },
             'en': {
                 'welcome': "👋 Hi, {first_name}!\n\nI'm your guide to the world of events. I'll help you find interesting concerts, plays, and much more.\n\nLet's get set up. First, choose your home country:",
-                'choose_travel_countries': "Great! Your home country is {home_country}.\n\nNow select the countries you are willing to travel to for events. You can add more or just click 'Done'.",
+                'choose_travel_countries': "Great! Your home country is {home_country}.\n\nNow, choose the countries you're willing to travel to for events. You can add more or just click 'Done'.",
                 'choose_local_cities': "Got it! Since you're staying in your home country, please select the cities whose events you want to see. You can choose from the popular ones below or find another city.",
                 'setup_complete': "🎉 Setup complete! You can now use all the bot's features.",
                 'main_menu_greeting': "Welcome back, {first_name}!",
                 'main_menu_button_afisha': "🗓 Events",
                 'main_menu_button_subs': "➕ Find/Add Artist",
                 'main_menu_button_profile': "👤 Profile",
-                'main_menu_button_search': "Заглушка",
+                'main_menu_button_search': "Placeholder",
                 'finish_button': "✅ Done",
                 'back_button': "⬅️ Back",
                 'settings_intro': "Here you can change your settings. Choose your home country:",
@@ -162,13 +164,62 @@ class Lexicon:
                 'city_not_found': "😔 Unfortunately, I couldn't find that city. Please try entering the name again.",
                 'city_found_prompt': "Here's what I found. Please select the correct city:",
                 'profile_menu_header': "👤 Your Profile",
-                'profile_button_location': "📍 Change Location",
+                'profile_button_location': "📍 Change Main Geo",
                 'profile_button_subs': "⭐ My Subscriptions",
+                'afisha_prompt_no_main_settings_v2': "You haven't set up your main preferences yet.\nWould you like to do it now (settings will be saved) or specify parameters just for this one time?",
+                'afisha_btn_setup_main_prefs': "🛠️ Setup and Save",
+                'afisha_btn_setup_temp_prefs': "➡️ Setup for this time",
+                
+                'afisha_prompt_with_main_settings_v2': "Would you like to see events based on your saved preferences, or specify other parameters for this time?",
+                'afisha_btn_use_my_settings': "✅ By my preferences",
+                'afisha_btn_setup_other_temp': "⚙️ Specify others",
+
+                'afisha_error_country_needed_for_main_setup_v2': "To save your main preferences, your home country must be set. Please complete the main onboarding (/start) or set it up in your profile.",
+                'afisha_error_country_not_set_v2': "Couldn't determine your country. Please make sure you've completed the initial setup or specified a country in your profile.",
+                
+                'afisha_select_city_prompt_v2': "🌍 Country: {country_name}.\nNow, choose a city for the events list:",
+                'error_state_lost_country_v2': "Session error: country information was lost. Please start the process again.",
+                
+                'afisha_city_selected_ask_types_v2': "🏙️ City: {city_name}.\nNow, select the event types you are interested in:",
+                'afisha_alert_no_types_selected_v2': "Please select at least one event type!",
+                'afisha_alert_no_city_selected_critical_v2': "Critical error: no city was selected! Please start over.",
+
+                'afisha_header_main_settings_saved_v2': "👍 Main preferences for {city_name} have been saved! Here are the events:",
+                'afisha_error_main_save_no_country_critical_v2': "Critical error: country for saving main preferences not found! Settings were not saved.",
+                'afisha_header_temp_choice_v2': "⏳ Events for {city_name} based on your temporary choice:",
+
+                'afisha_loading_category_city_v2': "Loading '{category_name}' in {city_name}...",
+                'afisha_no_events_for_category_city_v2': "😔 Unfortunately, nothing was found in {city_name} for the '{category_name}' category.",
+                
+                'afisha_no_types_info_v2': "Event types were not selected. The events list will not be shown by category.",
+                
+                'afisha_error_incomplete_main_settings_v2': "Your main preferences (city and/or event types) are incomplete or missing. Please set them up via Profile (/settings), complete the initial setup (/start), or choose the option for a temporary setup.",
+                'afisha_error_no_types_in_main_settings_for_city_v2': "Your saved preferences do not specify preferred event types for {city_name}.",
+                'afisha_header_by_main_settings_v2': "🗓️ Events list for {city_name} based on your saved preferences:",
+                'afisha_choose_period_prompt': "For what period are we looking for events?",
+                'afisha_choose_month_prompt': "Please select a month:",
+                'afisha_choose_filter_type_prompt': "Great! Searching from {date_from} to {date_to}.\n\nHow should we filter?",
+                'afisha_filter_by_my_prefs_button': "By my preferences",
+                'afisha_filter_by_temporary_button': "Choose location and categories",
+                'back_to_date_choice_button': "⬅️ Back to period selection",
+                
+                'period_today': "Today",
+                'period_tomorrow': "Tomorrow",
+                'period_this_week': "This week",
+                'period_this_weekend': "This weekend",
+                'period_this_month': "This month",
+                'period_other_month': "🗓 Choose another month",
+
+                'search_prompt_enter_query_v2': "Enter an event name or artist to search:",
+                'search_searching_for_query_v2': "🔎 Searching for: '{query_text}'...",
+                'search_no_results_found_v2': "😔 Nothing was found for your query '{query_text}'. Please try another query.",
 
                 'main_menu_button_favorites': "⭐ Favorites",
                 'favorites_menu_header_empty': "You have no favorites yet. Let's add the first one?",
                 'favorites_menu_header': "Your Favorites:\n{favorites_list}",
                 'favorites_add_button': "➕ Add to Favorites",
+                'favorites_list_prompt': "Your Favorites. Click on an artist/event to manage it:",
+                'favorite_artist_menu_prompt': "Manage favorite: {artist_name}",
                 'favorites_remove_button': "🗑️ Remove from Favorites",
                 'favorites_enter_name_prompt': "Enter the name of the artist, band, or festival you want to track:",
                 'favorites_not_found': "Unfortunately, nothing was found for your query. Please try again or go back.",
@@ -178,10 +229,8 @@ class Lexicon:
                 'favorites_removed_alert': "🗑️ Removed from favorites.",
                 'favorites_remove_empty_alert': "You have nothing in your favorites to remove.",
                 'back_to_favorites_menu_button': "⬅️ Back to Favorites Menu",
-                'edit_mobility_prompt': "Edit your list of countries for 'general mobility'. These settings will apply to all your favorite artists by default.",
-                'mobility_saved_alert': "✅ General mobility settings saved!",
-                'favorites_list_prompt': "Your Favorites. Click on an artist/event to manage it:",
-                'favorite_artist_menu_prompt': "Manage favorite: {artist_name}",
+                'back_to_favorites_list_button': "⬅️ Back to Favorites List",
+                'favorites_added_final': "✅ Done! Added to favorites: {count} item(s).",
                 'favorite_edit_regions_button': "✏️ Edit Tracking Regions",
                 'favorite_edit_regions_prompt': "Edit tracking regions for: {artist_name}",
                 'favorite_regions_updated_alert': "✅ Favorite's regions have been updated!",
@@ -192,25 +241,10 @@ class Lexicon:
                 'subs_added_success': "✅ Successfully added to subscriptions: {count} item(s).",
                 'subs_no_valid_numbers_provided': "You did not provide any valid numbers.",
                 'subs_nan_error': "Please enter numbers only.",
-                'subs_add_from_afisha_offer': "You can add these events to your subscriptions.", # Текст перед кнопкой
-                'favorites_added_final': "✅ Done! Added to favorites: {count} item(s).",
-                'back_button': "⬅️ Back",
-    
-                # --- ДОБАВИТЬ ЭТОТ БЛОК (АНГЛ.) ---
-                'afisha_choose_period_prompt': "For what period are we looking for events?",
-                'afisha_choose_month_prompt': "Please select a month:",
-                'afisha_choose_filter_type_prompt': "Great! Searching from {date_from} to {date_to}.\n\nHow should we filter?",
-                'afisha_filter_by_my_prefs_button': "By my preferences",
-                'afisha_filter_by_temporary_button': "Choose location and categories",
-                'back_to_date_choice_button': "⬅️ Back to period selection",
-                # Кнопки для клавиатуры выбора периода
-                'period_today': "Today",
-                'period_tomorrow': "Tomorrow",
-                'period_this_week': "This week",
-                'period_this_weekend': "This weekend",
-                'period_this_month': "This month",
-                'period_other_month': "🗓 Choose another month",
-
+                'subs_add_from_afisha_offer': "You can add these events to your subscriptions.",
+                'edit_mobility_prompt': "Edit your list of countries for 'general mobility'. These settings will apply to all your favorite artists by default.",
+                'mobility_saved_alert': "✅ General mobility settings saved!",
+                
                 'subs_menu_header_active': "You are tracking the following events.\nClick on any to manage it:",
                 'subs_menu_header_empty': "You have no active event subscriptions. You can add them from the 'Events' section.",
                 'subs_status_active': "Active",
@@ -223,6 +257,9 @@ class Lexicon:
                 'subs_removed_alert': "You have unsubscribed from this event.",
                 'subs_not_found_alert': "Error: subscription not found.",
                 'back_to_subscriptions_list_button': "⬅️ Back to subscriptions",
+                'back_to_profile_button': "⬅️ Back",
+
+                'subs_reminder_header': "🔔 **Reminder of your subscriptions:**",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---
