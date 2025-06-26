@@ -165,21 +165,16 @@ RETURNS TRIGGER AS $$
 DECLARE
     payload JSONB;
 BEGIN
-    -- Собираем вложенные данные об ивенте, типе, площадке и стране
+    -- Собираем вложенные данные
     SELECT jsonb_build_object(
         'event_id', e.event_id,
         'title', e.title,
         'description', e.description,
         'date_start', e.date_start,
-        'date_end', e.date_end,
-        'price_min', e.price_min,
-        'price_max', e.price_max,
-        'event_type', jsonb_build_object(
-            'name', et.name
-        ),
         'venue', jsonb_build_object(
             'name', v.name,
-            'city', cities.city_id
+            -- ИЗМЕНЕНИЕ: Добавляем имя города
+            'city_name', cities.name 
         ),
         'country', jsonb_build_object(
             'name', c.name
@@ -187,8 +182,6 @@ BEGIN
     )
     INTO payload
     FROM events e
-    JOIN event_types et ON e.type_id = et.type_id
-    
     JOIN venues v ON e.venue_id = v.venue_id
     JOIN cities cities ON v.city_id = cities.city_id
     JOIN countries c ON v.country_id = c.country_id
@@ -205,9 +198,7 @@ BEGIN
         )
     );
 
-    -- Отправляем JSON через канал
     PERFORM pg_notify('new_event_channel', payload::text);
-
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

@@ -7,16 +7,11 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from dateutil.relativedelta import relativedelta
 
 # --- КОНСТАНТЫ ---
-EVENT_TYPES_RU = ["Концерт", "Театр", "Спорт", "Цирк", "Выставка", "Фестиваль"]
 EVENT_TYPE_EMOJI = {
     "Концерт": "🎵", "Театр": "🎭", "Спорт": "🏅", "Цирк": "🎪",
     "Выставка": "🎨", "Фестиваль": "🎉",
 }
 
-RU_MONTH_NAMES = [
-    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
-]
 
 
 # --- ОСНОВНЫЕ КЛАВИАТУРЫ ---
@@ -77,7 +72,7 @@ def get_found_home_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboar
 def get_event_type_selection_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
     if selected_types is None: selected_types = []
     builder = InlineKeyboardBuilder()
-    for event_type in EVENT_TYPES_RU:
+    for event_type in lexicon.EVENT_TYPES:
         text = f"✅ {event_type}" if event_type in selected_types else f"⬜️ {event_type}"
         builder.button(text=text, callback_data=f"toggle_event_type:{event_type}")
     builder.adjust(2)
@@ -142,7 +137,7 @@ def get_edit_event_type_keyboard(lexicon, selected_types: list = None) -> Inline
     """Новая клавиатура для выбора типов событий в профиле."""
     if selected_types is None: selected_types = []
     builder = InlineKeyboardBuilder()
-    for event_type in EVENT_TYPES_RU:
+    for event_type in lexicon.EVENT_TYPES:
         text = f"✅ {event_type}" if event_type in selected_types else f"⬜️ {event_type}"
         builder.button(text=text, callback_data=f"edit_toggle_event_type:{event_type}")
     builder.adjust(2)
@@ -286,14 +281,14 @@ def get_paginated_artists_keyboard(all_artists: list, selected_artists: set, pag
     builder.row(InlineKeyboardButton(text="✅ Готово", callback_data="finish_artist_selection"))
     return builder.as_markup()
 
-def get_categories_keyboard(categories: list = None) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    source_list = categories if categories else EVENT_TYPES_RU
-    for category in source_list:
-        emoji = EVENT_TYPE_EMOJI.get(category, "🔹")
-        builder.button(text=f"{emoji} {category}", callback_data=f"category:{category}")
-    builder.adjust(2)
-    return builder.as_markup()
+# def get_categories_keyboard(categories: list = None) -> InlineKeyboardMarkup:
+#     builder = InlineKeyboardBuilder()
+#     source_list = categories if categories else EVENT_TYPES_RU
+#     for category in source_list:
+#         emoji = EVENT_TYPE_EMOJI.get(category, "🔹")
+#         builder.button(text=f"{emoji} {category}", callback_data=f"category:{category}")
+#     builder.adjust(2)
+#     return builder.as_markup()
 
 def get_cities_keyboard(cities: list, category: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -356,7 +351,7 @@ def get_month_choice_keyboard(lexicon) -> InlineKeyboardMarkup:
         
         # ИЗМЕНЕНИЕ: Получаем название месяца из нашего списка, а не через strftime
         # month_date.month вернет число от 1 до 12. В списках индексация с 0, поэтому -1.
-        month_name = RU_MONTH_NAMES[month_date.month - 1]
+        month_name = lexicon.MONTH_NAMES[month_date.month - 1]
         
         # Формируем текст для кнопки
         button_text = f"{month_name} {month_date.strftime('%Y')}"

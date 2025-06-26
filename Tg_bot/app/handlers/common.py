@@ -138,15 +138,18 @@ async def format_events_for_response(events: list) -> str:
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     user_lang = message.from_user.language_code
     lexicon = Lexicon(user_lang)
-    await set_main_menu(bot, user_lang)
+    
     async with async_session() as session:
         user = await db.get_or_create_user(session, message.from_user.id, message.from_user.username, user_lang)
-
+    await set_main_menu(bot, user_lang)
     if user.home_country:
         await message.answer(
             lexicon.get('main_menu_greeting').format(first_name=hbold(message.from_user.first_name)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb.get_main_menu_keyboard(lexicon),
         )
         return
+    
     await start_onboarding_process(message, state, lexicon)
 
 @router.callback_query(F.data == "change_location")

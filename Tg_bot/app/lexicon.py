@@ -10,11 +10,23 @@ LEXICON_COMMANDS_EN = {
     '/settings': 'Open profile'
 }
 
+EVENT_TYPES_RU = ["Концерт", "Театр", "Спорт", "Цирк", "Выставка", "Фестиваль"]
+EVENT_TYPES_EN = ["Concert", "Theater", "Sport", "Circus", "Exhibition", "Festival"]
+
+RU_MONTH_NAMES = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+EN_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
 class Lexicon:
     def __init__(self, lang_code: str = 'en'):
         self.lang_code = lang_code if lang_code in ('ru', 'be') else 'en'
         self.lexicon = self._get_lexicon()
+
+        if self.lang_code == 'ru':
+            self.EVENT_TYPES = EVENT_TYPES_RU
+            self.MONTH_NAMES = RU_MONTH_NAMES
+        else:
+            self.EVENT_TYPES = EVENT_TYPES_EN
+            self.MONTH_NAMES = EN_MONTH_NAMES
 
     def _get_lexicon(self):
         lexicons = {

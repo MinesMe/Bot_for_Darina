@@ -214,3 +214,15 @@ async def cq_back_to_single_favorite(callback: CallbackQuery, state: FSMContext)
     """Возврат из редактирования мобильности в меню артиста."""
     # Просто вызываем хелпер, который сам возьмет ID из state и все отрисует
     await show_single_favorite_menu(callback, state)
+
+# Для нотифаера
+@router.callback_query(F.data.startswith("add_to_subs_from_notify:"))
+async def cq_add_to_subs_from_notify(callback: CallbackQuery):
+    """Ловит нажатие на кнопку 'Добавить в подписки' из уведомления."""
+    try:
+        event_id = int(callback.data.split(":")[1])
+        # Используем функцию массового добавления, она безопасна для одного ID
+        await db.add_events_to_subscriptions_bulk(callback.from_user.id, [event_id])
+        await callback.answer("✅ Событие добавлено в 'Мои подписки'!", show_alert=True)
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка! Не удалось добавить событие.", show_alert=True)
