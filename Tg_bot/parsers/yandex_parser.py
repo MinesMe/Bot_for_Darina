@@ -100,4 +100,5 @@ def parse(config: dict) -> list[dict]:
         print(f"Произошла глобальная ошибка при парсинге {site_name}: {e}")
 
     print(f"Сайт {site_name} спарсен. Найдено событий: {len(all_events_data)}")
+    print(all_events_data)
     return all_events_data
