@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .models import async_session, Subscription, Event, User
+from ..models import async_session, Subscription, Event, User
 
 async def get_active_subscriptions_for_notify() -> list[Subscription]:
     """

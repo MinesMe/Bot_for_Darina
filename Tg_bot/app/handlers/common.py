@@ -8,10 +8,10 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message, CallbackQuery, BotCommand
 from aiogram.utils.markdown import hbold
 
-from ..database import requests as db
+from ..database.requests import requests as db
 from ..database.models import async_session
-from .. import keyboards as kb
-from ..lexicon import Lexicon, LEXICON_COMMANDS_RU, LEXICON_COMMANDS_EN
+from app import keyboards as kb
+from ..lexicon import Lexicon, LEXICON_COMMANDS_RU, LEXICON_COMMANDS_EN, EVENT_TYPE_EMOJI
 from .onboarding import start_onboarding_process
 
 router = Router()
@@ -70,7 +70,7 @@ async def format_events_with_headers(events_by_category: dict) -> tuple[str, lis
 
     for category_name, events in events_by_category.items():
         # Добавляем заголовок категории
-        emoji = kb.EVENT_TYPE_EMOJI.get(category_name, "🔹")
+        emoji = EVENT_TYPE_EMOJI.get(category_name, "🔹")
         response_parts.append(f"\n\n--- {emoji} {hbold(category_name)} ---\n")
 
         # Форматируем события внутри этой категории

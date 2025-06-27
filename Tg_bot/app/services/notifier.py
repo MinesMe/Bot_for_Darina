@@ -7,7 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.utils.markdown import hbold
 from aiogram.exceptions import TelegramForbiddenError
 
-from app.database import requests_notifier as db_notifier
+from app.database.requests import requests_notifier as db_notifier
 from app.lexicon import Lexicon
 
 async def send_reminders(bot: Bot):

@@ -16,6 +16,11 @@ EVENT_TYPES_EN = ["Concert", "Theater", "Sport", "Circus", "Exhibition", "Festiv
 RU_MONTH_NAMES = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
 EN_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
+EVENT_TYPE_EMOJI = {
+    "Концерт": "🎵", "Театр": "🎭", "Спорт": "🏅", "Цирк": "🎪",
+    "Выставка": "🎨", "Фестиваль": "🎉",
+}
+
 class Lexicon:
     def __init__(self, lang_code: str = 'en'):
         self.lang_code = lang_code if lang_code in ('ru', 'be') else 'en'

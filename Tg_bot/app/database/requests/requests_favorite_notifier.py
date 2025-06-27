@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .models import async_session, UserFavorite, Artist, User
+from ..models import async_session, UserFavorite, Artist, User
 
 async def get_favorite_subscribers_by_artist(artist_id: int) -> list[UserFavorite]:
     """

@@ -6,8 +6,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.markdown import hbold
 
-from ..database import requests as db
-from .. import keyboards as kb
+from ..database.requests import requests as db
+from app import keyboards as kb
 from ..lexicon import Lexicon
 from ..database.models import Artist
 

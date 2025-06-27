@@ -14,7 +14,7 @@ from parsers.test_parser import parse_site as parse_kvitki_playwright
 # Импортируем AI функцию
 from parsers.test_ai import getArtist
 # Импортируем НОВЫЕ функции для работы с БД
-from app.database.requests import (
+from app.database.requests.requests import (
     find_event_by_signature,
     update_event_details,
     create_event_with_artists

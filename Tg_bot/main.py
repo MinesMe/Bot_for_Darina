@@ -4,7 +4,7 @@ from app.database.models import async_main
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.handlers  import main_router as router
-from app.database.listener import listen_for_db_notifications
+from app.services.listener import listen_for_db_notifications
 from app.services.notifier import send_reminders
 
 import os

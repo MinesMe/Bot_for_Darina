@@ -7,8 +7,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.markdown import hbold
 from sqlalchemy import select
 
-from ..database import requests as db
-from .. import keyboards as kb
+from ..database.requests import requests as db
+from app import keyboards as kb
 from .common import format_events_for_response
 from .favorities import show_favorites_list 
 from ..lexicon import Lexicon

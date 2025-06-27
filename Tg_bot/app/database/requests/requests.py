@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
 from thefuzz import process as fuzzy_process, fuzz
 from datetime import datetime
 
-from .models import (
+from ..models import (
     UserFavorite, async_session, User, Subscription, Event, Artist, Venue, EventLink,
     EventType, EventArtist, Country, City
 )

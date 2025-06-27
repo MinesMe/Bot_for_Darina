@@ -9,8 +9,8 @@ from aiogram.utils.markdown import hbold
 from datetime import datetime, timedelta
 from calendar import monthrange
 
-from ..database import requests as db
-from .. import keyboards as kb
+from ..database.requests import requests as db
+from app import keyboards as kb
 from ..lexicon import Lexicon
 from .common import format_events_with_headers, format_events_for_response
 

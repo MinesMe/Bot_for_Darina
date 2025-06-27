@@ -6,11 +6,11 @@ from aiogram.utils.markdown import hbold, hitalic
 from aiogram.exceptions import TelegramForbiddenError
 
 from app.database.models import listener_engine
-from app.database import requests_favorite_notifier as db_notifier
-from app.database.keyboards_notifier import get_add_to_subscriptions_keyboard
+from app.database.requests import requests_favorite_notifier as db_notifier
+from app.keyboards.keyboards_notifier import get_add_to_subscriptions_keyboard
 from app.lexicon import Lexicon
 # Правильный импорт вашей функции
-from app.database.recommendation import get_recommended_artists
+from app.services.recommendation import get_recommended_artists
 
 async def favorite_notification_handler(bot: Bot, connection, pid, channel, payload):
     """

@@ -8,8 +8,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.markdown import hbold
 from aiogram.filters.state import StateFilter
 
-from ..database import requests as db
-from .. import keyboards as kb
+from ..database.requests import requests as db
+from app import keyboards as kb
 from ..lexicon import Lexicon
 # from app.handlers.afisha import Afisha
 
