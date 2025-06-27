@@ -1,42 +1,45 @@
+# Файл: parsers/test_parser.py
+
 import asyncio
 import json
 import re
 import sys
 from dataclasses import dataclass, asdict
-from typing import Optional, Dict
-
+from typing import Optional, Dict, List
+import logging # <-- Добавить импорт
 
 from playwright.async_api import async_playwright, Browser, TimeoutError as PlaywrightTimeoutError
 
-from test_ai import getArtist
+# --- ГЛОБАЛЬНЫЕ НАСТРОЙКИ (без изменений) ---
+CONCURRENT_EVENTS = 5
 
-# --- КОНФИГУРАЦИЯ ---
-CATEGORY_URL = 'https://www.kvitki.by/rus/bileti/teatr/'
-PAGES_TO_PARSE = 1
-CONCURRENT_EVENTS = 3
-MAX_EVENTS_TO_PROCESS = 25
-
-# --- МОДЕЛЬ ДАННЫХ ---
+# --- ИЗМЕНЕНИЕ 1: Обновляем модель данных ---
+# Мы разделили описание на два поля для ясности.
 @dataclass
 class EventData:
     link: str
     title: Optional[str] = None
     place: Optional[str] = None
+    # Это поле пойдет в Event.description в БД
     time_str: Optional[str] = None
-    description: Optional[str] = None  ### <--- ИЗМЕНЕНИЕ 1: ДОБАВЛЕНО ПОЛЕ
+    full_description: Optional[str] = None
     price_min: Optional[float] = None
     price_max: Optional[float] = None
     tickets_available: Optional[int] = None
     status: str = "ok"
 
-# --- ОСНОВНАЯ ЛОГИКА ПАРСИНГА ОДНОГО СОБЫТИЯ ---
+
+# --- ИЗМЕНЕНИЕ 2: Обновляем логику парсинга одного события ---
 async def parse_single_event(browser: Browser, event_url: str) -> Dict:
+    """
+    Собирает ВСЕ сырые данные со страницы события, но НЕ вызывает AI.
+    """
     page = None
     try:
         page = await browser.new_page()
-        await page.goto(event_url, timeout=35000)
+        await page.goto(event_url, timeout=60000)
 
-        # 1. Извлекаем базовую информацию (без изменений)
+        # 1. Извлекаем базовую информацию из JSON
         try:
             details_json = await page.evaluate('() => window.concertDetails')
         except Exception:
@@ -47,128 +50,144 @@ async def parse_single_event(browser: Browser, event_url: str) -> Dict:
 
         title = details_json.get('title')
         place = details_json.get('venueDescription')
+        # Сохраняем строку со временем. Она пойдет в БД в поле description.
         time_str = details_json.get('localisedStartDate')
         
         price_min_raw = details_json.get('minPrice')
         price_min = float(price_min_raw) if price_min_raw is not None else None
-        
         price_max = None
         prices_str = details_json.get('prices', '')
         prices_list = [float(p) for p in re.findall(r'\d+\.?\d*', prices_str.replace(',', '.'))]
         if len(prices_list) > 1:
             price_max = max(prices_list)
-        
-        description = None
+
+        # 2. Извлекаем ПОЛНОЕ описание для AI
+        full_description = None
         description_selector = 'div.concert_details_description_description_inner'
         if await page.locator(description_selector).count() > 0:
             raw_text = await page.locator(description_selector).inner_text()
             lines = [line.strip() for line in raw_text.split('\n')]
-            description = '\n'.join(line for line in lines if line)
+            full_description = '\n'.join(line for line in lines if line)
 
-        # 2. Получаем количество билетов (НОВАЯ УНИВЕРСАЛЬНАЯ ЛОГИКА)
+        # 3. Получаем количество билетов и ссылку на покупку
         tickets_available = 0
+        shop_url = None
         shop_url_button = page.locator('button[data-shopurl]').first
-        
+
         if await shop_url_button.count() > 0:
             shop_url = await shop_url_button.get_attribute('data-shopurl')
-            await page.goto(shop_url, timeout=35000)
+            await page.goto(shop_url, timeout=60000)
             
-            # Универсальный селектор для всех типов таблиц
             ticket_cells_selector = '[data-cy="price-zone-free-places"], .cdk-column-freePlaces'
-            
-            # Функция для поиска и подсчета билетов
             async def find_and_sum_tickets(search_context) -> Optional[int]:
                 try:
-                    # Ждем появления элементов на странице или во фрейме
-                    await search_context.wait_for_selector(ticket_cells_selector, state='visible', timeout=10000)
-                    await search_context.wait_for_timeout(500) # Доп. задержка
-                    
+                    await search_context.wait_for_selector(ticket_cells_selector, state='visible', timeout=15000)
+                    await search_context.wait_for_timeout(500)
                     all_counts_text = await search_context.locator(ticket_cells_selector).all_inner_texts()
-                    
-                    if not all_counts_text:
-                        return 0
-                    
-                    total_tickets = 0
-                    for text in all_counts_text:
-                        match = re.search(r'\d+', text)
-                        if match:
-                            total_tickets += int(match.group(0))
-                    return total_tickets
+                    if not all_counts_text: return 0
+                    return sum(int(match.group(0)) for text in all_counts_text if (match := re.search(r'\d+', text)))
                 except PlaywrightTimeoutError:
-                    return None # Возвращаем None, если ничего не найдено
-
-            # План А: Ищем на основной странице
+                    return None
             tickets_available = await find_and_sum_tickets(page)
-
-            # План Б: Если на основной странице ничего нет, ищем во всех iframe
             if tickets_available is None:
-                # Находим все iframe на странице
-                frames = page.frames
-                for frame in frames[1:]: # Пропускаем главный фрейм (саму страницу)
-                    # Пытаемся найти и посчитать билеты внутри каждого фрейма
+                for frame in page.frames[1:]:
                     frame_tickets = await find_and_sum_tickets(frame)
                     if frame_tickets is not None:
                         tickets_available = frame_tickets
-                        break # Нашли в первом же фрейме, выходим
-            
-            # Если после всех поисков ничего не нашли, считаем, что билетов 0
-            if tickets_available is None:
-                tickets_available = 0
+                        break
+            if tickets_available is None: tickets_available = 0
         else:
             tickets_available = 0
         
-        artists = await getArtist(description) # Твоя функция для AI
+        # 4. Формируем итоговый объект с сырыми данными. БЕЗ ВЫЗОВА AI.
         event = EventData(
-            title=title, place=place, time_str=time_str, link=event_url,
-            description=artists, 
-            price_min=price_min, price_max=price_max, tickets_available=tickets_available
+            link=shop_url if shop_url else event_url, 
+            title=title, 
+            place=place, 
+            time_str=time_str,
+            full_description=full_description, 
+            price_min=price_min, 
+            price_max=price_max, 
+            tickets_available=tickets_available
         )
-        print(f"✅ Успешно: {title} | Билетов: {tickets_available}", file=sys.stderr)
+        print(f"✅ Сырые данные собраны: {title}", file=sys.stderr)
         return asdict(event)
 
     except Exception as e:
-        print(f"❌ Ошибка при обработке {event_url}: {e}", file=sys.stderr)
+        print(f"❌ Ошибка при сборе сырых данных для {event_url}: {e}", file=sys.stderr)
         return asdict(EventData(link=event_url, title=f"Ошибка обработки", status="error"))
     finally:
         if page:
             await page.close()
 
-# --- ГЛАВНАЯ ФУНКЦИЯ-ОРКЕСТРАТОР ---
-async def main():
-    print("🚀 Запуск парсера на Playwright...", file=sys.stderr)
+
+# --- ИЗМЕНЕНИЕ 3: Главная функция parse_site ---
+# Нужно адаптировать ее под новый формат данных
+async def parse_site(config: Dict) -> List[Dict]:
+    """
+    Основная функция-парсер для сайта Kvitki.by с использованием Playwright.
+    Принимает конфиг, возвращает список словарей с данными о событиях.
+    """
+    base_url = config.get('url')
+    category_name = config.get('category_name', 'Unknown Category')
+    if not base_url:
+        print(f"❌ [Playwright] В конфиге для '{category_name}' отсутствует ключ 'url'.", file=sys.stderr)
+        return []
+
+    pages_to_parse_limit = config.get('pages_to_parse_limit', float('inf'))
+    max_events_limit = config.get('max_events_to_process_limit', float('inf'))
+    concurrent_events = config.get('concurrent_events', CONCURRENT_EVENTS)
+
+    print(f"\n[INFO] Запуск Playwright-парсера для категории: '{category_name}'", file=sys.stderr)
+    if pages_to_parse_limit != float('inf') or max_events_limit != float('inf'):
+        print(f"⚠️ [ТЕСТОВЫЙ РЕЖИМ] Применены ограничения: страниц={int(pages_to_parse_limit)}, событий={int(max_events_limit)}", file=sys.stderr)
+    
+    event_links = set()
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        page_for_lists = await browser.new_page()
 
-        # 1. Собираем ссылки на все ивенты
-        event_links = set()
-        for page_num in range(1, PAGES_TO_PARSE + 1):
-            url = f"{CATEGORY_URL}page:{page_num}/"
-            print(f"📄 Сканирую страницу со списком: {url}", file=sys.stderr)
+        page_num = 1
+        while page_num <= pages_to_parse_limit:
+            url = f"{base_url}page:{page_num}/"
+            print(f"📄 Сканирую страницу: {url}", file=sys.stderr)
             try:
-                await page.goto(url, timeout=30000)
-                await page.wait_for_selector('a.event_short', timeout=15000)
+                await page_for_lists.goto(url, timeout=30000)
+                await page_for_lists.wait_for_selector('a.event_short', timeout=10000, state='attached')
+                locators = page_for_lists.locator('a.event_short')
+                new_links_count = 0
+                for i in range(await locators.count()):
+                    if len(event_links) >= max_events_limit: break
+                    link = await locators.nth(i).get_attribute('href')
+                    if link and link not in event_links:
+                        event_links.add(link)
+                        new_links_count += 1
+                if new_links_count == 0:
+                    print(f"   - Новые события на странице {page_num} не найдены. Завершаю сбор.", file=sys.stderr)
+                    break
+                print(f"   - Найдено {new_links_count} новых ссылок. Всего собрано: {len(event_links)}", file=sys.stderr)
+                if len(event_links) >= max_events_limit:
+                    print("   - Достигнут лимит событий. Завершаю сбор.", file=sys.stderr)
+                    break
+                page_num += 1
             except PlaywrightTimeoutError:
-                print("   - Карточки событий не найдены.", file=sys.stderr)
+                print(f"   - Карточки событий на странице {page_num} не найдены. Завершаю сбор.", file=sys.stderr)
                 break
-
-            locators = page.locator('a.event_short')
-            count = await locators.count()
-            for i in range(count):
-                link = await locators.nth(i).get_attribute('href')
-                if link:
-                    event_links.add(link)
-            print(f"   - Найдено {count} ссылок.", file=sys.stderr)
-
-        await page.close()
+            except Exception as e:
+                print(f"   - Произошла непредвиденная ошибка: {e}. Завершаю сбор.", file=sys.stderr)
+                break
         
-        event_links_list = list(event_links)[:MAX_EVENTS_TO_PROCESS]
-        print(f"\n🔗 Всего собрано {len(event_links)} ссылок. Обрабатываю первые {len(event_links_list)}...", file=sys.stderr)
+        await page_for_lists.close()
         
-        # 2. Запускаем парсинг событий параллельно
-        semaphore = asyncio.Semaphore(CONCURRENT_EVENTS)
+        event_links_list = list(event_links)
+        print(f"\n🔗 Всего собрано {len(event_links_list)} уникальных ссылок для обработки.", file=sys.stderr)
+        
+        if not event_links_list:
+            await browser.close()
+            return []
+
+        semaphore = asyncio.Semaphore(concurrent_events)
         tasks = []
-
         async def run_with_semaphore(link):
             async with semaphore:
                 return await parse_single_event(browser, link)
@@ -179,14 +198,50 @@ async def main():
         results = await asyncio.gather(*tasks)
         await browser.close()
 
-        # 3. Выводим результат
-        final_results = [res for res in results if res['status'] == 'ok']
-        
-        print(f"\n🎉 ПАРСИНГ ЗАВЕРШЕН. Успешно обработано: {len(final_results)} событий.", file=sys.stderr)
-        
-        json_output = json.dumps(final_results, indent=2, ensure_ascii=False)
-        print(json_output)
+    # Адаптируем результат под формат, который ожидает run_parsers.py
+    final_results = []
+    for res in results:
+        if res.get('status') == 'ok':
+            # Переименовываем 'time_str' в 'time' для совместимости с run_parsers.py
+            # Это поле пойдет в Event.description
+            res['time'] = res.pop('time_str', None)
+            
+            tickets_count = res.pop('tickets_available', 0)
+            if tickets_count is not None and tickets_count > 0:
+                res['tickets_info'] = f"{tickets_count} билетов"
+            else:
+                res['tickets_info'] = "В наличии" if res.get('price_min') else "Нет в наличии"
+            
+            res.pop('status', None)
+            final_results.append(res)
+            
+    print(f"🎉 Сбор сырых данных для '{category_name}' завершен. Собрано: {len(final_results)} событий.", file=sys.stderr)
+    return final_results
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# --- Блок для автономного тестирования файла (без изменений) ---
+if __name__ == '__main__':
+    print("--- ЗАПУСК АВТОНОМНОГО ТЕСТА ПАРСЕРА ---")
+    print("Парсер будет работать в режиме с ограничениями.")
+
+    test_config = {
+        'category_name': 'Музыка (Тест)',
+        'url': 'https://www.kvitki.by/rus/bileti/muzyka/',
+        'event_type': 'Концерт',
+        'parsing_method': 'playwright_kvitki',
+        'pages_to_parse_limit': 1,
+        'max_events_to_process_limit': 3,
+    }
+
+    async def run_test():
+        results = await parse_site(test_config)
+        print("\n--- ИТОГОВЫЙ РЕЗУЛЬТАТ ТЕСТА (СЫРЫЕ ДАННЫЕ) ---")
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+        print(f"\nВсего получено: {len(results)} событий.")
+
+    try:
+        asyncio.run(run_test())
+    except KeyboardInterrupt:
+        print("\n\nПроцесс парсинга остановлен пользователем.")
+    except Exception as e:
+        print(f"\nВо время тестового запуска произошла ошибка: {e}")

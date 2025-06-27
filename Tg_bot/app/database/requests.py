@@ -1,5 +1,6 @@
 # app/database/requests.py
 
+import logging
 from sqlalchemy import select, delete, and_, or_, func, distinct, union, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
@@ -561,37 +562,33 @@ async def get_or_create(session, model, **kwargs):
         return instance
 
 
-async def get_or_create_city_and_country(session, city_name: str, default_country_id: int = 1):
+async def get_or_create_city_and_country(session, city_name: str, country_name: str) -> tuple[City, Country]:
     """
-    Ищет город по имени. Если находит, возвращает его и страну.
-    Если не находит, создает новый город в стране по умолчанию.
+    Находит или создает страну по имени, затем находит или создает город в этой стране.
+    Возвращает объекты City и Country.
     """
-    # Ищем город и сразу подгружаем связанную страну, чтобы избежать лишних запросов
-    stmt = select(City).options(selectinload(City.country)).where(City.name == city_name)
-    result = await session.execute(stmt)
-    city_obj = result.scalar_one_or_none()
+    # Сначала находим или создаем страну
+    country_obj = await get_or_create(session, Country, name=country_name)
+
+    # Теперь, когда у нас есть ID страны, ищем город в этой конкретной стране
+    city_stmt = select(City).where(
+        and_(
+            City.name == city_name,
+            City.country_id == country_obj.country_id
+        )
+    )
+    city_obj = (await session.execute(city_stmt)).scalar_one_or_none()
 
     if city_obj:
-        # Город найден, возвращаем его и его страну
-        return city_obj, city_obj.country
-
-    # Город не найден, нужно его создать
-    # Сначала убедимся, что страна по умолчанию существует
-    default_country_obj = await session.get(Country, default_country_id)
-    if not default_country_obj:
-        # Критическая ситуация: в базе нет даже страны по умолчанию.
-        # Можно либо выбросить ошибку, либо создать и ее. Пока выбросим ошибку.
-        raise ValueError(f"Страна по умолчанию с ID {default_country_id} не найдена в базе данных.")
-
-    # Создаем новый город
-    new_city = City(name=city_name, country_id=default_country_id)
-    session.add(new_city)
-    await session.flush() # Применяем изменения, чтобы получить city_id
-    
-    print(f"Добавлен новый город: {city_name} в страну {default_country_obj.name}")
-    
-    # Возвращаем новый город и его страну
-    return new_city, default_country_obj
+        # Город в нужной стране найден
+        return city_obj, country_obj
+    else:
+        # Город не найден, создаем его с правильным country_id
+        new_city = City(name=city_name, country_id=country_obj.country_id)
+        session.add(new_city)
+        await session.flush() # Получаем city_id
+        logging.info(f"  - Добавлен новый город: '{city_name}' в страну '{country_name}'")
+        return new_city, country_obj
 
 # async def add_unique_event(event):
 #     async with async_session() as session:
@@ -680,85 +677,192 @@ async def get_subscription_details(user_id: int, event_id: int) -> Subscription 
 #             await session.commit()
 
 
-async def get_or_create_or_update_event(event_data: dict) -> tuple[Event | None, bool]:
-    """
-    ИЗМЕНЕНИЕ: Ищет событие по ссылке (если есть) или по НАЗВАНИЮ + МЕСТУ + ДАТЕ.
-    Если находит - обновляет. Если нет - создает.
-    """
-    async with async_session() as session:
-        existing_event = None
+# async def get_or_create_or_update_event(event_data: dict) -> tuple[Event | None, bool]:
+#     """
+#     ИЗМЕНЕНИЕ: Ищет событие по ссылке (если есть) или по НАЗВАНИЮ + МЕСТУ + ДАТЕ.
+#     Если находит - обновляет. Если нет - создает.
+#     """
+#     async with async_session() as session:
+#         existing_event = None
         
-        # Шаг 1: Поиск существующего события
-        if event_data.get('link'):
-            # Поиск по ссылке остается самым надежным и быстрым
-            stmt = select(Event).join(EventLink).where(EventLink.url == event_data['link']).options(selectinload(Event.venue))
-            existing_event = (await session.execute(stmt)).scalar_one_or_none()
+#         # Шаг 1: Поиск существующего события
+#         if event_data.get('link'):
+#             # Поиск по ссылке остается самым надежным и быстрым
+#             stmt = select(Event).join(EventLink).where(EventLink.url == event_data['link']).options(selectinload(Event.venue))
+#             existing_event = (await session.execute(stmt)).scalar_one_or_none()
         
-        # ИЗМЕНЕНИЕ: Если по ссылке не нашли (или ее нет), используем более строгий ключ
-        if not existing_event:
-            # Запасной способ: поиск по названию, месту И ДАТЕ НАЧАЛА
-            # Это позволит различать одинаковые события в разные дни
-            stmt = (
-                select(Event)
-                .join(Event.venue)
-                .where(and_(
-                    Event.title == event_data['event_title'],
-                    Venue.name == event_data['venue'],
-                    # Добавляем сравнение по дате. 'timestamp' - это объект datetime
-                    Event.date_start == event_data.get('timestamp') 
-                ))
-                .options(selectinload(Event.venue))
-            )
-            existing_event = (await session.execute(stmt)).scalar_one_or_none()
+#         # ИЗМЕНЕНИЕ: Если по ссылке не нашли (или ее нет), используем более строгий ключ
+#         if not existing_event:
+#             # Запасной способ: поиск по названию, месту И ДАТЕ НАЧАЛА
+#             # Это позволит различать одинаковые события в разные дни
+#             stmt = (
+#                 select(Event)
+#                 .join(Event.venue)
+#                 .where(and_(
+#                     Event.title == event_data['event_title'],
+#                     Venue.name == event_data['venue'],
+#                     # Добавляем сравнение по дате. 'timestamp' - это объект datetime
+#                     Event.date_start == event_data.get('timestamp') 
+#                 ))
+#                 .options(selectinload(Event.venue))
+#             )
+#             existing_event = (await session.execute(stmt)).scalar_one_or_none()
 
-        if existing_event:
-            # --- Логика ОБНОВЛЕНИЯ (без изменений) ---
-            existing_event.price_min = event_data.get('price_min')
-            existing_event.price_max = event_data.get('price_max')
-            existing_event.tickets_info = event_data.get('tickets_info')
+#         if existing_event:
+#             # --- Логика ОБНОВЛЕНИЯ (без изменений) ---
+#             existing_event.price_min = event_data.get('price_min')
+#             existing_event.price_max = event_data.get('price_max')
+#             existing_event.tickets_info = event_data.get('tickets_info')
             
-            await session.commit()
-            await session.refresh(existing_event)
-            return existing_event, False
-        else:
-            # --- Логика СОЗДАНИЯ (без изменений) ---
-            try:
-                # ... (весь блок создания остается прежним)
-                event_type_obj = await get_or_create(session, EventType, name=event_data["event_type"])
-                city_obj, country_obj = await get_or_create_city_and_country(session, event_data['city'])
-                artist_obj = await get_or_create(session, Artist, name=event_data['event_title'])
-                venue_obj = await get_or_create(session, Venue, 
-                                            name=event_data['venue'], 
-                                            city_id=city_obj.city_id,
-                                            country_id=country_obj.country_id)
+#             await session.commit()
+#             await session.refresh(existing_event)
+#             return existing_event, False
+#         else:
+#             # --- Логика СОЗДАНИЯ (без изменений) ---
+#             try:
+#                 # ... (весь блок создания остается прежним)
+#                 event_type_obj = await get_or_create(session, EventType, name=event_data["event_type"])
+#                 city_obj, country_obj = await get_or_create_city_and_country(session, event_data['city'])
+#                 artist_obj = await get_or_create(session, Artist, name=event_data['event_title'])
+#                 venue_obj = await get_or_create(session, Venue, 
+#                                             name=event_data['venue'], 
+#                                             city_id=city_obj.city_id,
+#                                             country_id=country_obj.country_id)
 
-                new_event = Event(
-                    title=event_data['event_title'],
-                    venue_id=venue_obj.venue_id,
-                    type_id=event_type_obj.type_id,
-                    date_start=event_data.get('timestamp'),
-                    price_min=event_data.get('price_min'),
-                    price_max=event_data.get('price_max'),
-                    tickets_info=event_data.get('tickets_info')
-                )
-                session.add(new_event)
-                await session.flush()
+#                 new_event = Event(
+#                     title=event_data['event_title'],
+#                     venue_id=venue_obj.venue_id,
+#                     type_id=event_type_obj.type_id,
+#                     date_start=event_data.get('timestamp'),
+#                     price_min=event_data.get('price_min'),
+#                     price_max=event_data.get('price_max'),
+#                     tickets_info=event_data.get('tickets_info')
+#                 )
+#                 session.add(new_event)
+#                 await session.flush()
 
+#                 event_artist_link = EventArtist(event_id=new_event.event_id, artist_id=artist_obj.artist_id)
+#                 session.add(event_artist_link)
+
+#                 if event_data.get('link'):
+#                     event_url_link = EventLink(event_id=new_event.event_id, url=event_data['link'], type="bilety")
+#                     session.add(event_url_link)
+                
+#                 await session.commit()
+#                 await session.refresh(new_event)
+#                 return new_event, True
+#             except Exception as e:
+#                 await session.rollback()
+#                 print(f"Ошибка при создании нового ивента: {e}")
+#                 return None, False
+            
+
+async def find_event_by_signature(session, title: str, date_start: datetime) -> Event | None:
+    """
+    Находит событие по его уникальной сигнатуре: названию и точной дате начала.
+    Возвращает объект Event или None.
+    """
+    # Если нет даты или названия, невозможно найти уникальное событие
+    if not title or not date_start:
+        return None
+        
+    stmt = (
+        select(Event)
+        .where(
+            and_(
+                Event.title == title,
+                Event.date_start == date_start
+            )
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def update_event_details(session, event_id: int, event_data: dict):
+    """
+    Обновляет ключевую информацию для СУЩЕСТВУЮЩЕГО события (цены, билеты).
+    """
+    await session.execute(
+        update(Event)
+        .where(Event.event_id == event_id)
+        .values(
+            price_min=event_data.get('price_min'),
+            price_max=event_data.get('price_max'),
+            tickets_info=event_data.get('tickets_info')
+        )
+    )
+    
+    # Также обновим или добавим ссылку на покупку, если она новая
+    link_url = event_data.get('link')
+    if link_url:
+        link_stmt = select(EventLink).where(and_(EventLink.event_id == event_id, EventLink.url == link_url))
+        existing_link = (await session.execute(link_stmt)).scalar_one_or_none()
+        if not existing_link:
+            new_link = EventLink(event_id=event_id, url=link_url, type="bilety")
+            session.add(new_link)
+            print(f"  - Добавлена новая ссылка для события ID {event_id}")
+
+
+async def create_event_with_artists(session, event_data: dict, artist_names: list[str]) -> Event | None:
+    """
+    Создает новое событие и все его связи (место, артисты, ссылка).
+    Теперь корректно работает со страной и городом.
+    """
+    try:
+        # 1. Получаем/создаем связанные сущности
+        event_type_obj = await get_or_create(session, EventType, name=event_data["event_type"])
+        
+        # Вызываем нашу новую, улучшенную функцию
+        city_obj, country_obj = await get_or_create_city_and_country(
+            session, 
+            city_name=event_data['city'], 
+            country_name=event_data['country_name'] # Передаем имя страны
+        )
+        
+        # Создаем Venue с правильными ID города и страны
+        venue_obj = await get_or_create(session, Venue, 
+                                    name=event_data['venue'], 
+                                    city_id=city_obj.city_id,
+                                    country_id=country_obj.country_id) # <--- ВОТ ОНО!
+
+        # 2. Создаем само событие
+        new_event = Event(
+            title=event_data['event_title'],
+            description=event_data.get('time'), 
+            venue_id=venue_obj.venue_id,
+            type_id=event_type_obj.type_id,
+            date_start=event_data.get('timestamp'),
+            price_min=event_data.get('price_min'),
+            price_max=event_data.get('price_max'),
+            tickets_info=event_data.get('tickets_info')
+        )
+        session.add(new_event)
+        await session.flush()
+
+        # 3. Создаем ссылку на покупку
+        if event_data.get('link'):
+            event_url_link = EventLink(event_id=new_event.event_id, url=event_data['link'], type="bilety")
+            session.add(event_url_link)
+
+        # 4. Работа с артистами
+        if artist_names:
+            for artist_name in artist_names:
+                # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                # Приводим имя к нижнему регистру, как и в populate_artists_if_needed
+                formatted_name = artist_name.strip().lower() 
+                if not formatted_name: continue
+                # get_or_create будет искать/создавать артиста с именем в нижнем регистре
+                artist_obj = await get_or_create(session, Artist, name=formatted_name)
                 event_artist_link = EventArtist(event_id=new_event.event_id, artist_id=artist_obj.artist_id)
                 session.add(event_artist_link)
 
-                if event_data.get('link'):
-                    event_url_link = EventLink(event_id=new_event.event_id, url=event_data['link'], type="bilety")
-                    session.add(event_url_link)
-                
-                await session.commit()
-                await session.refresh(new_event)
-                return new_event, True
-            except Exception as e:
-                await session.rollback()
-                print(f"Ошибка при создании нового ивента: {e}")
-                return None, False
-            
+        await session.flush()
+        return new_event
+
+    except Exception as e:
+        logging.error(f"Критическая ошибка при создании события '{event_data.get('event_title')}': {e}", exc_info=True)
+        return None
 
 async def get_event_by_id(event_id: int) -> Event | None:
     """Находит событие по его ID."""
