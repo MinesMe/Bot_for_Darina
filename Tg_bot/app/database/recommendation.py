@@ -1,0 +1,153 @@
+from datetime import datetime, timedelta
+import google.generativeai as genai
+import os
+from dotenv import load_dotenv
+
+from .query import get_concert_recommendations_query, get_local_event_recommendations_query
+from app.database.models import async_session # Импортируем async_session из models.py
+
+load_dotenv()
+
+async def get_recommended_artists(artist_name):
+
+    gemini_api_key = os.getenv('GEMINI_API_KEY')
+    if not gemini_api_key:
+        raise ValueError("GEMINI_API_KEY не установлен.")
+    genai.configure(api_key=gemini_api_key)
+
+
+    model = genai.GenerativeModel('gemini-2.5-flash')
+
+    prompt = (
+        f"Назови 1 артиста, которого обычно слушают вместе с {artist_name}, "
+        f"1, который очень похож на {artist_name}, и 1, который отличается "
+        f"какой-то изюминкой от {artist_name}. "
+        f"Ответь только именами артистов, разделенными запятыми, без дополнительных символов. Назови всего 3 артиста"
+    )
+
+    try:
+        response = await model.generate_content_async(prompt)
+        # Очищаем и форматируем ответ, чтобы получить только названия артистов
+        raw_artists = response.text.strip()
+        # Разделяем строку по запятым и убираем лишние пробелы
+        recommended_artists = [artist.strip() for artist in raw_artists.split(',') if artist.strip()]
+
+        if len(recommended_artists) != 3:
+            print(f"Предупреждение: Gemini вернул не 3 артиста: {recommended_artists}. Возвращаем пустой список.")
+            return []
+
+        print(f"Успешно получены рекомендации для '{artist_name}'.")
+        return recommended_artists
+
+    except Exception as e:
+        print(f"Произошла ошибка при запросе к Gemini API: {e}")
+        return []
+
+def get_concert_recommendations(country_name: str, target_date_str: str):
+    """
+    Извлекает информацию о мероприятиях (артист, страна, город, дата)
+    в указанной стране и в заданном диапазоне дат с использованием SQLAlchemy.
+
+    Args:
+        country_name (str): Название страны (например, 'Чехия').
+        target_date_str (str): Целевая дата в формате 'YYYY-MM-DD' (например, '2025-08-23').
+
+    Returns:
+        list: Список словарей, каждый из которых содержит информацию о мероприятии
+              (artist_name, country_name, city_name, event_date).
+              Возвращает пустой список, если мероприятий не найдено.
+    """
+    db = None
+    try:
+        # Преобразование строки даты в объект datetime
+        target_date = datetime.strptime(target_date_str, '%Y-%m-%d')
+
+        # Получаем сессию базы данных
+        db = async_session()
+        results = get_concert_recommendations_query(db, country_name, target_date)
+        return results
+
+    except ValueError as e:
+        print(f"Ошибка формата даты: {e}. Убедитесь, что дата в формате YYYY-MM-DD.")
+        return []
+    except Exception as e:
+        print(f"Произошла ошибка при получении рекомендаций по концертам: {e}")
+        return []
+    finally:
+        if db:
+            db.close() # Важно закрывать сессию
+
+def get_local_event_recommendations(home_country_name: str):
+    """
+    Извлекает информацию о предстоящих мероприятиях (артист, страна, город, дата)
+    в указанной стране проживания пользователя, в течение 10 дней от текущей даты,
+    с использованием SQLAlchemy.
+
+    Args:
+        home_country_name (str): Название страны проживания пользователя (например, 'Германия').
+
+    Returns:
+        list: Список словарей, каждый из которых содержит информацию о мероприятии
+              (artist_name, country_name, city_name, event_date).
+              Возвращает пустой список, если мероприятий не найдено.
+    """
+    db = None
+    try:
+        # Получаем сессию базы данных
+        db = async_session()
+        results = get_local_event_recommendations_query(db, home_country_name)
+        return results
+
+    except Exception as e:
+        print(f"Произошла ошибка при получении предстоящих мероприятий: {e}")
+        return []
+    finally:
+        if db:
+            db.close() # Важно закрывать сессию
+
+if __name__ == "__main__":
+
+    input_artist = ... # Артист
+    
+    if input_artist:
+        recommended_artists = get_recommended_artists(input_artist)
+        if recommended_artists:
+            print("\n--- Рекомендованные артисты ---")
+            for artist in recommended_artists:
+                print(f"Артист: {artist}")
+            print("---------------------------------------------------------")
+        else:
+            print("Не удалось получить рекомендации артистов.")
+
+    country_concert = ... # Страна
+    date_concert = ... # Дата концерта (ГГГГ-ММ-ДД)
+    
+    if date_concert and country_concert:
+        concert_recommendations = get_concert_recommendations(country_concert, date_concert)
+        if concert_recommendations:
+            print("\n--- Рекомендованные выступления в поездке для дальнейшей интеграции ---")
+            for event in concert_recommendations:
+                print(f"- Артист: {event.get('artist')}, Страна: {event['country_name']}, "
+                f"Город: {event['city_name']}, Дата: {event['event_date']}")
+            print("-----------------------------------------------------------------------")
+        else:   
+            print(f"Мероприятия в {country_concert} (дата +- 4 дня от {date_concert}) не найдены.")
+        print("\n" + "="*30 + "\n")
+    else:
+        print("Недостаточно данных для получения рекомендаций по выступлениям.")
+
+    country_residence = ... # Страна проживания
+
+    if country_residence:
+        local_event_recommendations = get_local_event_recommendations(country_residence)
+        if local_event_recommendations:
+            print("\n--- Рекомендованные местные мероприятия ---")
+            for event in local_event_recommendations:
+                print(f"- Артист: {event.get('artist')}, Страна: {event['country_name']}, "
+            f"Город: {event['city_name']}, Дата: {event['event_date']}")
+            print("---------------------------------------------------------------------")
+        else:
+            print("Не удалось получить рекомендации по местным мероприятиям.")
+        print("\n" + "="*30 + "\n")
+    else:
+        print("Недостаточно данных для получения рекомендаций по местным мероприятиям.")

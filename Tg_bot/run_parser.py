@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 
@@ -104,37 +104,78 @@ async def populate_artists_if_needed(session):
 # --- 2. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПАРСИНГА ДАТЫ ---
 def parse_datetime_from_str(date_str: str) -> datetime | None:
     """
-    Парсит дату из строки, пробуя несколько известных форматов.
+    Парсит дату из строки, пробуя несколько известных форматов,
+    включая относительные даты ("сегодня", "завтра") и даты без года.
     """
     if not isinstance(date_str, str):
         return None
 
-    # --- Попытка 1: Формат '24 июля 2024, 19:00' ---
+    cleaned_str = date_str.lower().strip()
+    now = datetime.now()
+    
+    # --- Попытка 1: Относительные даты "сегодня" и "завтра" ---
+    try:
+        time_part = "00:00"
+        time_match = re.search(r'(\d{1,2}:\d{2})', cleaned_str)
+        if time_match:
+            time_part = time_match.group(1)
+
+        target_date = None
+        if "сегодня" in cleaned_str:
+            target_date = now.date()
+        elif "завтра" in cleaned_str:
+            target_date = (now + timedelta(days=1)).date()
+
+        if target_date:
+            return datetime.strptime(f"{target_date.strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %H:%M")
+    except (ValueError, IndexError):
+        pass
+
+    # --- Попытка 2: Формат '24 июля 2024, 19:00' (Kvitki) или '28 июня 2024' ---
     try:
         months_map = {'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04', 'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08', 'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'}
-        processed_str = date_str.lower()
+        processed_str = cleaned_str
         for name, num in months_map.items():
             if name in processed_str:
                 processed_str = processed_str.replace(name, num)
-                cleaned_str = re.sub(r'[,.]| г', '', processed_str)
-                cleaned_str = re.sub(r'\s+', ' ', cleaned_str).strip()
-                # Если в дате есть время, используем этот формат
-                if ':' in cleaned_str:
-                    return datetime.strptime(cleaned_str, "%d %m %Y %H:%M")
-                # Если времени нет, парсим только дату
+                
+                # Убираем дни недели и лишние символы
+                processed_str = re.sub(r'^[а-я]{2},?\s*', '', processed_str) # "сб," -> ""
+                processed_str = re.sub(r'[,.]| г', '', processed_str)
+                processed_str = re.sub(r'\s+', ' ', processed_str).strip()
+
+                # Сценарий А: Есть год ('28 06 2024 19:00')
+                if re.search(r'\d{4}', processed_str):
+                    if ':' in processed_str:
+                        return datetime.strptime(processed_str, "%d %m %Y %H:%M")
+                    else:
+                        return datetime.strptime(processed_str, "%d %m %Y")
+                
+                # Сценарий Б: Нет года ('28 06 19:00')
                 else:
-                    return datetime.strptime(cleaned_str, "%d %m %Y")
-    except ValueError:
-        # Если формат не подошел, просто переходим к следующей попытке
+                    format_str = "%d %m %H:%M" if ':' in processed_str else "%d %m"
+                    # Парсим без года (по умолчанию будет 1900-й год)
+                    temp_date = datetime.strptime(processed_str, format_str)
+                    
+                    # Заменяем год на текущий
+                    final_date = temp_date.replace(year=now.year)
+                    
+                    # Если получившаяся дата уже прошла в этом году (например, сегодня июль, а событие в июне),
+                    # значит, оно будет в следующем году.
+                    if final_date < now:
+                        final_date = final_date.replace(year=now.year + 1)
+                    
+                    return final_date
+
+    except (ValueError, IndexError):
         pass
 
-    # --- Попытка 2: Формат 'Сб 28.06.2025' ---
+    # --- Попытка 3: Формат 'Сб 28.06.2025' (старый формат Яндекса) ---
     try:
-        # Убираем день недели (первое слово)
-        date_part = date_str.split(' ', 1)[-1]
+        # Убираем день недели (первое слово и возможную запятую)
+        date_part = re.sub(r'^[а-яА-Я]+,?\s*', '', cleaned_str)
         return datetime.strptime(date_part, "%d.%m.%Y")
     except (ValueError, IndexError):
-        # Если и этот формат не подошел, логируем ошибку
         pass
 
     logging.warning(f"Не удалось распознать дату ни одним из известных форматов: '{date_str}'")
@@ -174,8 +215,7 @@ async def process_all_sites():
     all_raw_events = []
     parser_mapping = {
         'playwright_kvitki': parse_kvitki_playwright,
-        # 'json': parse_kvitki, # Раскомментируй, если нужно
-        # 'bs4_bezkassira': parse_bezkassira,
+        'selenium_yandex': parse_yandex,
     }
 
     for site_config in ALL_CONFIGS:
@@ -183,25 +223,24 @@ async def process_all_sites():
         parser_func = parser_mapping.get(parsing_method)
         
         if not parser_func:
-            print(f"Пропускаю конфиг с неизвестным методом: {parsing_method}")
-            logging.warning(f"Пропускаю конфиг с неизвестным методом: {parsing_method}") # <--- ЗАМЕНА
+            logging.warning(f"Пропускаю конфиг с неизвестным методом: {parsing_method}")
             continue
             
-        print(f"\n--- Запуск парсера '{parsing_method}' для категории '{site_config.get('event_type')}' ---")
-        logging.info(f"\n--- Запуск парсера '{parsing_method}' для категории '{site_config.get('event_type')}' ---") # <--- ЗАМЕНА
+        logging.info(f"\n--- Запуск парсера '{parsing_method}' для категории '{site_config.get('site_name')}' ---")
         events_from_site = await parser_func(site_config)
         
+        # ОБОГАЩАЕМ КАЖДОЕ СОБЫТИЕ ДАННЫМИ ИЗ КОНФИГА
         for event in events_from_site:
             event['event_type'] = site_config.get('event_type', 'Другое')
+            event['config'] = site_config # <-- Просто передаем весь конфиг дальше!
+
         all_raw_events.extend(events_from_site)
 
     if not all_raw_events:
-        print("События не найдены ни на одном из сайтов. Завершаю работу.")
-        logging.info("События не найдены ни на одном из сайтов. Завершаю работу.") # <--- ЗАМЕНА
+        logging.info("События не найдены ни на одном из сайтов. Завершаю работу.")
         return
 
     # Этап 2: Обработка сырых данных и синхронизация с БД
-    print(f"\n--- Всего собрано {len(all_raw_events)} сырых событий. Начинаю обработку и сверку с БД... ---")
     logging.info(f"\n--- Всего собрано {len(all_raw_events)} сырых событий. Начинаю обработку и сверку с БД... ---")
     
     events_created_count = 0
@@ -211,19 +250,17 @@ async def process_all_sites():
         await populate_artists_if_needed(session)
         for event_data in all_raw_events:
             title = event_data.get('title')
-            if not title or "Ошибка обработки" in title:
+            current_config = event_data.get('config') # <-- Извлекаем прикрепленный конфиг
+
+            if not title or "Ошибка обработки" in title or not current_config:
                 continue
             
-            # 1. Подготовка ключевых данных для поиска и создания
             time_str = event_data.get('time')
             timestamp = parse_datetime_from_str(time_str)
             
-            # 2. Поиск существующего события в БД по уникальной сигнатуре
             existing_event = await find_event_by_signature(session, title=title, date_start=timestamp)
             
-            # 3. Принятие решения: обновить или создать
             if existing_event:
-                # ---- СЦЕНАРИЙ ОБНОВЛЕНИЯ ----
                 update_data = {
                     "price_min": event_data.get('price_min'),
                     "price_max": event_data.get('price_max'),
@@ -232,34 +269,35 @@ async def process_all_sites():
                 }
                 await update_event_details(session, event_id=existing_event.event_id, event_data=update_data)
                 events_updated_count += 1
-                print(f"🔄 ОБНОВЛЕНО: {title} | {time_str}")
-                logging.info(f"🔄 ОБНОВЛЕНО: {title} | {time_str}") # <--- ЗАМЕНА
+                logging.info(f"🔄 ОБНОВЛЕНО: {title} | {time_str}")
                 
             else:
-                # ---- СЦЕНАРИЙ СОЗДАНИЯ ----
-                print(f"  - Найдено новое событие: '{title}'.")
                 logging.info(f"  - Найдено новое событие: '{title}'.")
                 
                 full_description = event_data.get('full_description')
                 artist_names = []
                 if full_description:
-                    print(f"    - Вызываю AI для поиска артистов...")
                     logging.info(f"    - Вызываю AI для поиска артистов...")
                     artist_names = await getArtist(full_description)
-                    print(f"    - AI нашел: {artist_names if artist_names else 'нет артистов'}")
                     logging.info(f"    - AI нашел: {artist_names if artist_names else 'нет артистов'}")
                 
-                # --- ИЗМЕНЕНИЕ: Достаем имя страны из конфига ---
-                # Используем Беларусь по умолчанию, если в конфиге не указано
-                country_name = site_config.get('country_name', 'Беларусь')
+                # --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ГОРОДА И СТРАНЫ ---
+                place_str = event_data.get('place')
+                
+                # Способ 1: Получаем город и страну напрямую из конфига (приоритетный)
+                city = current_config.get('city_name')
+                country_name = current_config.get('country_name') # Он должен быть
+                
+                # Способ 2: Если в конфиге города нет, извлекаем его из строки
+                if not city:
+                    city = extract_city_from_place(place_str)
 
-                # Собираем полный пакет данных для создания
                 creation_data = {
                     "event_title": title,
                     "event_type": event_data['event_type'],
-                    "venue": event_data.get('place', 'Место не указано'),
-                    "city": extract_city_from_place(event_data.get('place')),
-                    "country_name": country_name, # <--- И ДОБАВЛЯЕМ ЕГО СЮДА
+                    "venue": place_str or 'Место не указано',
+                    "city": city,
+                    "country_name": country_name,
                     "time": time_str,
                     "timestamp": timestamp,
                     "price_min": event_data.get('price_min'),
@@ -271,8 +309,7 @@ async def process_all_sites():
                 new_event_obj = await create_event_with_artists(session, event_data=creation_data, artist_names=artist_names)
                 if new_event_obj:
                     events_created_count += 1
-                    print(f"✅ СОЗДАНО: {new_event_obj.title} | {time_str}")
-                    logging.info(f"✅ СОЗДАНО: {new_event_obj.title} | {time_str}") # <--- ЗАМЕНА
+                    logging.info(f"✅ СОЗДАНО: {new_event_obj.title} | {time_str}")
         
         # 4. Сохраняем все изменения в БД одной большой транзакцией
         print("\nСохраняю все изменения в базе данных...")

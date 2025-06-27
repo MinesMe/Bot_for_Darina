@@ -213,28 +213,86 @@ EXECUTE FUNCTION notify_new_event();
 
 
 
+
+
+# --- НОВЫЙ КОД: Триггер для добавления в "Избранное" ---
+SQL_CREATE_FAVORITE_NOTIFY_FUNCTION = """
+CREATE OR REPLACE FUNCTION notify_new_user_favorite()
+RETURNS TRIGGER AS $$
+DECLARE
+    payload JSONB;
+    artist_name_var TEXT;
+BEGIN
+    -- Получаем имя артиста по его ID из вставленной строки (NEW.artist_id)
+    SELECT name INTO artist_name_var
+    FROM artists
+    WHERE artist_id = NEW.artist_id;
+
+    -- Собираем JSON-объект с необходимой информацией
+    payload := jsonb_build_object(
+        'user_id', NEW.user_id,
+        'artist_id', NEW.artist_id,
+        'artist_name', artist_name_var
+    );
+
+    -- Отправляем уведомление в наш новый, выделенный канал
+    PERFORM pg_notify('user_favorite_added_channel', payload::text);
+
+    -- Возвращаем NEW, что является стандартной практикой для AFTER-триггеров
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+SQL_CREATE_FAVORITE_TRIGGER = """
+CREATE TRIGGER user_favorite_insert_trigger
+AFTER INSERT ON user_favorites
+FOR EACH ROW
+EXECUTE FUNCTION notify_new_user_favorite();
+"""
+# --- КОНЕЦ НОВОГО КОДА ---
+
+
+
 listener_engine = create_async_engine(url=SQL_ALCHEMY, poolclass=NullPool)
 
 
 
 
 
+# Вставьте этот код вместо вашей текущей функции async_main
+
 async def async_main():
     print("Инициализация базы данных: проверка и создание таблиц...")
+    # Шаг 1: Создание/проверка таблиц. Этот блок у вас был правильным.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("Таблицы успешно созданы или уже существуют.")
 
-    print("Проверка и создание функции-триггера и триггера для 'events'...")
+    # Шаг 2: Создание/обновление функций и триггеров в одной атомарной транзакции.
+    print("\nПроверка и создание функций и триггеров...")
     try:
+        # ## Правильный способ: используем engine.begin() для управления транзакцией ##
         async with engine.connect() as conn:
-        # Выполняем SQL-код для создания функции-триггера
+            print(" -> Транзакция для создания триггеров начата.")
             await conn.execute(text("DROP TRIGGER IF EXISTS new_event_trigger ON event_artists;"))
+            # --- Триггер для событий ---
+            print("-> Обновление триггера для 'events'...")
             await conn.execute(text(SQL_CREATE_TRIGGER_FUNCTION))
-            # Выполняем SQL-код для создания самого триггера
             await conn.execute(text(SQL_CREATE_TRIGGER))
-            await conn.commit() # Важно зафиксировать изменения
-    except Exception as e: 
-        print(e)
+            print("-> Триггер для 'events' успешно обновлен.")
 
-    print("Функция-триггер и триггер успешно созданы или обновлены.")
+            # --- Триггер для избранного ---
+            print("      -> Обновление триггера для 'user_favorites'...")
+            await conn.execute(text("DROP TRIGGER IF EXISTS user_favorite_insert_trigger ON user_favorites;"))
+            await conn.execute(text("DROP FUNCTION IF EXISTS notify_new_user_favorite();"))
+            await conn.execute(text(SQL_CREATE_FAVORITE_NOTIFY_FUNCTION))
+            await conn.execute(text(SQL_CREATE_FAVORITE_TRIGGER))
+            print("      -> Триггер для 'user_favorites' успешно обновлен.")
+        
+        # COMMIT будет вызван здесь автоматически при выходе из блока "with"
+        print("✅ Транзакция успешно завершена. Все объекты в БД обновлены.")
+
+    except Exception as e:
+        # ROLLBACK будет вызван здесь автоматически, если в блоке "with" произойдет ошибка
+        print(f"❌ Произошла ошибка во время транзакции, все изменения отменены: {e}")
