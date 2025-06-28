@@ -62,9 +62,10 @@ async def cq_edit_main_geo_start(callback: CallbackQuery, state: FSMContext):
     """Начинает флоу редактирования основного гео."""
     await state.set_state(EditMainGeoFSM.choosing_country)
     lexicon = Lexicon(callback.from_user.language_code)
+    text = lexicon.get('edit_geo_choose_country_prompt')
     countries_to_show = await db.get_countries(home_country_selection=True)
     await callback.message.edit_text(
-        "Выберите вашу страну проживания:",
+        text,
         reply_markup=kb.get_edit_country_keyboard(countries_to_show, lexicon)
     )
     await callback.answer()
@@ -82,8 +83,9 @@ async def cq_edit_country_selected(callback: CallbackQuery, state: FSMContext):
     await state.set_state(EditMainGeoFSM.choosing_city)
     lexicon = Lexicon(callback.from_user.language_code)
     top_cities = await db.get_top_cities_for_country(country_name)
+    text = lexicon.get('edit_geo_city_prompt').format(country_name=hbold(country_name))
     await callback.message.edit_text(
-        f"Страна: {hbold(country_name)}. Теперь выберите город.",
+        text,
         reply_markup=kb.get_edit_city_keyboard(top_cities, lexicon),
         parse_mode="HTML"
     )
@@ -132,10 +134,11 @@ async def cq_back_to_edit_city_list(callback: CallbackQuery, state: FSMContext):
     
     data = await state.get_data()
     country_name = data.get("home_country")
+    lexicon = Lexicon(callback.from_user.language_code)
     
     if not country_name:
         # Если в состоянии нет страны (маловероятно, но возможно), возвращаемся в профиль
-        await callback.answer("Произошла ошибка, попробуйте снова.", show_alert=True)
+        await callback.answer(lexicon.get('generic_error_try_again'), show_alert=True)
         await show_profile_menu(callback, state)
         return
 
@@ -143,9 +146,10 @@ async def cq_back_to_edit_city_list(callback: CallbackQuery, state: FSMContext):
     await state.set_state(EditMainGeoFSM.choosing_city)
     lexicon = Lexicon(callback.from_user.language_code)
     top_cities = await db.get_top_cities_for_country(country_name)
+    text = lexicon.get('edit_geo_city_prompt').format(country_name=hbold(country_name))
     
     await callback.message.edit_text(
-        f"Страна: {hbold(country_name)}. Теперь выберите город.",
+        text,
         reply_markup=kb.get_edit_city_keyboard(top_cities, lexicon),
         parse_mode="HTML"
     )
@@ -161,8 +165,9 @@ async def cq_edit_city_selected(callback: CallbackQuery, state: FSMContext):
     prefs = await db.get_user_preferences(callback.from_user.id)
     current_types = prefs.get("preferred_event_types", []) if prefs else []
     await state.update_data(selected_event_types=current_types)
+    text = lexicon.get('edit_geo_event_types_prompt').format(city_name=hbold(city_name))    
     await callback.message.edit_text(
-        f"Город: {hbold(city_name)}. Теперь выберите интересующие типы событий.",
+        text    ,
         reply_markup=kb.get_edit_event_type_keyboard(lexicon, current_types),
         parse_mode="HTML"
     )
@@ -186,8 +191,9 @@ async def cq_edit_finish(callback: CallbackQuery, state: FSMContext):
     """Завершает редактирование основного гео и возвращает в профиль."""
     data = await state.get_data()
     selected_event_types = data.get("selected_event_types", [])
+    lexicon = Lexicon(callback.from_user.language_code)
     if not selected_event_types:
-        await callback.answer("Пожалуйста, выберите хотя бы один тип событий.", show_alert=True)
+        await callback.answer(lexicon.get('select_at_least_one_event_type_alert'), show_alert=True)
         return
     await db.update_user_preferences(
         user_id=callback.from_user.id,
@@ -196,7 +202,7 @@ async def cq_edit_finish(callback: CallbackQuery, state: FSMContext):
         event_types=selected_event_types,
         main_geo_completed=True
     )
-    await callback.answer("Настройки успешно изменены!", show_alert=True)
+    await callback.answer(lexicon.get('settings_changed_successfully_alert'), show_alert=True)
     await show_profile_menu(callback, state)
 
 
@@ -206,19 +212,21 @@ async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
     """Начинает флоу редактирования общей мобильности, используя СВОЮ FSM."""
     # Устанавливаем состояние из НАШЕЙ новой FSM
     await state.set_state(EditMobilityFSM.selecting_regions)
+    user_lang = callback.message.from_user.language_code
+    lexicon = Lexicon(user_lang)
     
     current_regions = await db.get_general_mobility(callback.from_user.id) or []
     await state.update_data(selected_regions=current_regions) # Сохраняем текущий выбор
     all_countries = await db.get_countries()
     
     await callback.message.edit_text(
-        "Измените свой список стран для 'общей мобильности'.",
+        lexicon.get('edit_mobility_prompt'),
         reply_markup=kb.get_region_selection_keyboard(
             all_countries, 
             current_regions, 
-            # Используем простой и уникальный callback
             finish_callback="finish_mobility_edit",
-            back_callback="back_to_profile" 
+            back_callback="back_to_profile" ,
+            lexicon=lexicon
         )
     )
     await callback.answer()
@@ -227,13 +235,14 @@ async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
 async def cq_finish_general_edit_from_profile(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     regions = data.get("selected_regions", [])
+    lexicon = Lexicon(callback.from_user.language_code)
     
     if not regions:
-        await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
+        await callback.answer(lexicon.get('no_regions_selected_alert'), show_alert=True)
         return
 
     await db.set_general_mobility(callback.from_user.id, regions)
-    await callback.answer("✅ Общие настройки мобильности сохранены!", show_alert=True)
+    await callback.answer(lexicon.get('mobility_saved_alert'), show_alert=True)
     
     # Возвращаемся в меню профиля, а не продолжаем флоу подписок
     await show_profile_menu(callback, state)
@@ -274,10 +283,11 @@ async def cq_back_to_subscriptions_list(callback: CallbackQuery, state: FSMConte
 @router.callback_query(F.data.startswith("view_subscription:"))
 async def cq_view_subscription(callback: CallbackQuery, state: FSMContext):
     """Показывает детальную информацию по одной подписке."""
+    lexicon = Lexicon(callback.from_user.language_code)
     try:
         event_id = int(callback.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await callback.answer("Ошибка: неверный ID события.", show_alert=True)
+        await callback.answer(lexicon.get('invalid_event_id_error'), show_alert=True)
         return
 
     sub_details = await db.get_subscription_details(callback.from_user.id, event_id)
@@ -287,17 +297,19 @@ async def cq_view_subscription(callback: CallbackQuery, state: FSMContext):
         event_details = await session.get(Event, event_id)
 
     if not sub_details or not event_details:
-        await callback.answer("Подписка или событие не найдено.", show_alert=True)
+        await callback.answer(lexicon.get('sub_or_event_not_found_error'), show_alert=True)
         await show_subscriptions_list(callback, state)
         return
 
     lexicon = Lexicon(callback.from_user.language_code)
     status_text = lexicon.get('subs_status_active') if sub_details.status == 'active' else lexicon.get('subs_status_paused')
-    date_str = event_details.date_start.strftime('%d.%m.%Y %H:%M') if event_details.date_start else "Дата не указана"
+    date_str = event_details.date_start.strftime('%d.%m.%Y %H:%M') if event_details.date_start else lexicon.get('date_not_specified')
     
-    text = (f"Подписка на событие: {hbold(event_details.title)}\n"
-            f"Дата: {date_str}\n\n"
-            f"Статус: {status_text}")
+    text = lexicon.get('subscription_details_view').format(
+        title=hbold(event_details.title),
+        date=date_str,
+        status=status_text
+    )
     
     await callback.message.edit_text(
         text,
@@ -309,10 +321,11 @@ async def cq_view_subscription(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("toggle_sub_status:"))
 async def cq_toggle_subscription_status(callback: CallbackQuery, state: FSMContext):
     """Переключает статус подписки (active/paused)."""
+    lexicon = Lexicon(callback.from_user.language_code)
     try:
         event_id = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
-        await callback.answer("Ошибка: неверный ID события.", show_alert=True)
+        await callback.answer(lexicon.get('invalid_event_id_error'), show_alert=True)
         return
         
     user_id = callback.from_user.id
@@ -334,10 +347,11 @@ async def cq_toggle_subscription_status(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data.startswith("delete_subscription:"))
 async def cq_delete_subscription(callback: CallbackQuery, state: FSMContext):
+    lexicon = Lexicon(callback.from_user.language_code)
     try:
         event_id = int(callback.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await callback.answer("Ошибка: неверный ID события.", show_alert=True)
+        await callback.answer(lexicon.get('invalid_event_id_error'), show_alert=True)
         return
     
     # 1. Вызываем функцию удаления из БД
@@ -359,6 +373,8 @@ async def cq_toggle_mobility_region(callback: CallbackQuery, state: FSMContext):
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
+    user_lang = callback.message.from_user.language_code
+    lexicon = Lexicon(user_lang)
     
     if region_name in selected:
         selected.remove(region_name)
@@ -371,7 +387,8 @@ async def cq_toggle_mobility_region(callback: CallbackQuery, state: FSMContext):
     # Перерисовываем клавиатуру с тем же уникальным callback
     await callback.message.edit_reply_markup(
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, selected, finish_callback="finish_mobility_edit", back_callback="back_to_profile"
+            all_countries, selected, finish_callback="finish_mobility_edit", back_callback="back_to_profile",
+            lexicon=lexicon
         )
     )
     await callback.answer()
@@ -380,9 +397,10 @@ async def cq_toggle_mobility_region(callback: CallbackQuery, state: FSMContext):
 async def cq_finish_mobility_edit(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     regions = data.get("selected_regions", [])
+    lexicon = Lexicon(callback.from_user.language_code)
 
     await db.set_general_mobility(callback.from_user.id, regions)
-    await callback.answer("✅ Общие настройки мобильности сохранены!", show_alert=True)
+    await callback.answer(lexicon.get('mobility_saved_alert'), show_alert=True)
     
     # Возвращаемся в меню профиля
     await show_profile_menu(callback, state)

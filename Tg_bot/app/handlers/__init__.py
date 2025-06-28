@@ -12,7 +12,7 @@ from .favorities import router as favorites_router
 
 # Импортируем вспомогательные функции, чтобы они были доступны из пакета
 # Например, для run_notifier.py
-from .common import format_events_for_response, format_grouped_events_for_response
+
 
 # Создаем главный роутер, который будет включать в себя все остальные
 main_router = Router()

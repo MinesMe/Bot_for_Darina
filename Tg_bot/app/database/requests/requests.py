@@ -39,6 +39,17 @@ async def get_or_create_user(session, user_id: int, username: str = None, lang_c
         await session.commit()
     return user
 
+async def get_user_lang(user_id):
+    async with async_session() as session:
+        result = await session.execute(
+            select(User.language_code)
+            .where(User.user_id == user_id)
+        )
+        prefs = result.first()
+        if prefs:
+            return prefs.language_code
+        return None
+
 async def update_user_preferences(user_id: int, home_country: str, home_city: str, event_types: list, main_geo_completed: bool):
     # ... (код без изменений)
     async with async_session() as session:

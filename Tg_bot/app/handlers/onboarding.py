@@ -28,7 +28,6 @@ class Onboarding(StatesGroup):
 async def finish_onboarding(callback_or_message: Message | CallbackQuery, state: FSMContext, is_setting_complete):
     user_id = callback_or_message.from_user.id
     data = await state.get_data()
-    print(data)
     lexicon = Lexicon(callback_or_message.from_user.language_code)
 
     await db.update_user_preferences(
@@ -95,11 +94,6 @@ async def toggle_event_type(callback: CallbackQuery, state: FSMContext):
 
 
 async def search_for_city(callback: CallbackQuery, state: FSMContext, send_from):
-    
-    # await state.set_state(Onboarding.waiting_for_city_search)
-    
-        
-
     await state.update_data(msg_id_to_edit=callback.message.message_id)
     lexicon = Lexicon(callback.from_user.language_code)
     await callback.message.edit_text(lexicon.get('search_city_prompt'))
@@ -139,8 +133,9 @@ async def cq_select_home_country(callback: CallbackQuery, state: FSMContext):
     await state.update_data(home_country=country_name)
     lexicon = Lexicon(callback.from_user.language_code)
 
+    text = lexicon.get('onboarding_country_selected_prompt').format(country_name=hbold(country_name))
     await callback.message.edit_text(
-        f"Отлично, твоя страна: {hbold(country_name)}. Дальше вам надо настроить город проживания и предпочитаемые типы ивентов.",
+        text,
         reply_markup=kb.get_main_geo_settings(lexicon),
         parse_mode=ParseMode.HTML
     )
@@ -156,8 +151,9 @@ async def cq_select_home_country(callback: CallbackQuery, state: FSMContext):
     lexicon = Lexicon(callback.from_user.language_code)
     top_cities = await db.get_top_cities_for_country(country_name)
 
+    text = lexicon.get('onboarding_city_selection_prompt').format(country_name=hbold(country_name))
     await callback.message.edit_text(
-        f"Отлично, твоя страна: {hbold(country_name)}. Теперь выбери свой город или пропусти этот шаг.",
+        text,
         reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
         parse_mode=ParseMode.HTML
     )
@@ -172,9 +168,9 @@ async def cq_select_home_city(callback: CallbackQuery, state: FSMContext):
     lexicon = Lexicon(callback.from_user.language_code)
     await state.set_state(Onboarding.choosing_event_types)
     await state.update_data(selected_event_types=[])
+    text = lexicon.get('onboarding_event_type_prompt').format(city_name=hbold(city_name))
     await callback.message.edit_text(
-        f"Отлично, твой город: {hbold(city_name)}. "
-        "Выбери типы событий, которые тебе интересны. Это поможет мне давать лучшие рекомендации.",
+        text,
         reply_markup=kb.get_event_type_selection_keyboard(lexicon),
         parse_mode=ParseMode.HTML
     )
@@ -223,22 +219,13 @@ async def cq_back_to_city_selection(callback: CallbackQuery, state: FSMContext):
     country_name = data.get("home_country")
     lexicon = Lexicon(callback.from_user.language_code)
     top_cities = await db.get_top_cities_for_country(country_name)
+    text = lexicon.get('onboarding_back_to_city_prompt').format(country_name=hbold(country_name))
     await callback.message.edit_text(
-        f"Твоя страна: {hbold(country_name)}. Выбери свой город или пропусти.",
+        text,
         reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
         parse_mode=ParseMode.HTML
     )
     await callback.answer()
-
-
-# @router.callback_query(Onboarding.asking_for_filter_setup, F.data == "setup_filters_no")
-# async def cq_setup_filters_no(callback: CallbackQuery, state: FSMContext):
-#     await state.update_data(selected_event_types=[])
-#     await finish_onboarding(callback, state)
-
-
-# get_event_type_selection_keyboard
-
 
 @router.callback_query(Onboarding.choosing_event_types, F.data.startswith("toggle_event_type:"))
 async def cq_toggle_event_type(callback: CallbackQuery, state: FSMContext):
@@ -265,10 +252,10 @@ async def cq_finish_preferences_selection(callback: CallbackQuery, state: FSMCon
     data = await state.get_data()
     event_types=data.get("selected_event_types", [])
     if is_setting_complete != "False" and (event_types == []):
-        await callback.message.answer("Выберите хотя бы один ивент")
+        lexicon = Lexicon(callback.from_user.language_code)
+        await callback.message.answer(lexicon.get('select_at_least_one_event_type_alert'))
         await callback.answer()
     else:
-        print(data)
         await finish_onboarding(callback, state, is_setting_complete)
 
 

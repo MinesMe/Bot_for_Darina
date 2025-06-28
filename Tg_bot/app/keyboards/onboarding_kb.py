@@ -14,8 +14,8 @@ def get_country_selection_keyboard(countries: list, lexicon) -> InlineKeyboardMa
 
 def get_main_geo_settings(lexicon)-> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="Настроить", callback_data=f"select_home_country"))
-    builder.row(InlineKeyboardButton(text="Пропустить настройку", callback_data=f"finish_preferences_selection:{False}"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('configure'), callback_data=f"select_home_country"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('skip_settings'), callback_data=f"finish_preferences_selection:{False}"))
     return builder.as_markup()
 
 def get_found_home_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboardMarkup:

@@ -1,5 +1,3 @@
-# app/services/notifier.py
-
 import asyncio
 from collections import defaultdict
 from aiogram import Bot
@@ -21,10 +19,8 @@ async def send_reminders(bot: Bot):
         return
 
     # 2. Группируем подписки по пользователям
-    # defaultdict(list) создает словарь, где значение по умолчанию - пустой список
     reminders_by_user = defaultdict(list)
     for sub in active_subscriptions:
-        # sub.user и sub.event уже загружены благодаря selectinload
         if sub.user and sub.event:
             reminders_by_user[sub.user].append(sub.event)
 
@@ -36,13 +32,17 @@ async def send_reminders(bot: Bot):
         
         events_parts = []
         for i, event in enumerate(events, 1):
-            date_str = event.date_start.strftime('%d.%m.%Y %H:%M') if event.date_start else "TBA"
-            tickets_str = event.tickets_info or "В наличии"
+            # --- ИЗМЕНЕНИЕ --- Используется существующий ключ lexicon вместо "TBA"
+            date_str = event.date_start.strftime('%d.%m.%Y %H:%M') if event.date_start else lexicon.get('date_not_specified')
+            # --- ИЗМЕНЕНИЕ --- Используется lexicon вместо "В наличии"
+            tickets_str = event.tickets_info or lexicon.get('tickets_available')
             
-            event_text = (
-                f"{hbold(f'{i}. {event.title}')}\n"
-                f"📅 {date_str}\n"
-                f"🎟️ Билеты: {tickets_str}"
+            # --- ИЗМЕНЕНИЕ --- Весь блок текста для события берется из лексикона
+            event_text = lexicon.get('reminder_event_item').format(
+                index=i,
+                title=event.title,
+                date=date_str,
+                tickets=tickets_str
             )
             events_parts.append(event_text)
         
@@ -55,10 +55,11 @@ async def send_reminders(bot: Bot):
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True
             )
-            # Небольшая пауза между отправками, чтобы не попасть под лимиты Telegram
             await asyncio.sleep(0.1) 
         except TelegramForbiddenError:
+            # Текст для логов остается без изменений, согласно вашим требованиям
             print(f"Пользователь {user.user_id} заблокировал бота. Деактивируем его подписки.")
             await db_notifier.deactivate_user_subscriptions(user.user_id)
         except Exception as e:
+            # Текст для логов остается без изменений
             print(f"Не удалось отправить уведомление пользователю {user.user_id}: {e}")

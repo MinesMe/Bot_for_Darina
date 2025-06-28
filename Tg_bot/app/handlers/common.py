@@ -16,7 +16,7 @@ from .onboarding import start_onboarding_process
 
 router = Router()
 
-from app.utils import set_main_menu
+from app.utils.utils import set_main_menu
 
 
 @router.message(CommandStart())
@@ -44,4 +44,5 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(F.text.startswith('/'))
 async def any_unregistered_command_handler(message: Message):
-    await message.reply("Я не знаю такой команды. Воспользуйтесь кнопками меню.")
+    lexicon = Lexicon(message.from_user.language_code)
+    await message.reply(lexicon.get('unknown_command'))

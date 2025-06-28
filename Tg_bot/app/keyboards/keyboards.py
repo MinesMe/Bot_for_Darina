@@ -37,7 +37,7 @@ def get_home_city_selection_keyboard(top_cities: list, lexicon) -> InlineKeyboar
     for city in top_cities:
         builder.button(text=city, callback_data=f"select_home_city:{city}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="🔎 Найти другой город", callback_data="search_for_home_city"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('find_another_city'), callback_data="search_for_home_city"))
     return builder.as_markup()
 
 
@@ -76,7 +76,8 @@ def get_region_selection_keyboard(
     all_countries: list, 
     selected_regions: list, 
     finish_callback: str,
-    back_callback: str  # <--- Просто добавляем этот параметр
+    back_callback: str,
+    lexicon  # <--- Просто добавляем этот параметр
 ) -> InlineKeyboardMarkup:
     """
     Универсальная клавиатура для выбора стран.
@@ -87,10 +88,10 @@ def get_region_selection_keyboard(
         text = f"✅ {country}" if country in selected_regions else f"⬜️ {country}"
         builder.button(text=text, callback_data=f"toggle_region:{country}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="✅ Готово", callback_data=finish_callback))  
+    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data=finish_callback))  
     
     # ИЗМЕНЕНИЕ: Добавляем кнопку "Назад" с переданным callback_, вы правы. Прошу прощения, я усложнил иdata
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback))
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data=back_callback))
     
     return builder.as_markup()
 

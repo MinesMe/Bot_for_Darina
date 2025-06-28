@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramForbiddenError
 
 from app.database.models import listener_engine
 from app.database.requests import requests_favorite_notifier as db_notifier
+from app.database.requests.requests import get_user_lang
 from app.keyboards.keyboards_notifier import get_add_to_subscriptions_keyboard
 from app.lexicon import Lexicon
 # Правильный импорт вашей функции
@@ -31,22 +32,20 @@ async def favorite_notification_handler(bot: Bot, connection, pid, channel, payl
         # 1. ПОЛУЧАЕМ ВАШ ГОТОВЫЙ СПИСОК АРТИСТОВ
         # Исправлено: используем импортированную функцию напрямую
         artists = await get_recommended_artists(artist_name)
-        
+        user_lang = await get_user_lang(user_id)
+        lexicon = Lexicon(user_lang)
         # 2. ФОРМИРУЕМ ТЕКСТ СООБЩЕНИЯ
-        text = (
-            f"Мы заметили, что вы добавили в избранное {hbold(artist_name)}! ✨\n\n"
-            f"Возможно, вам также понравятся эти исполнители:\n"
-        )
+        text_header = lexicon.get('recommendations_after_add_favorite').format(artist_name=hbold(artist_name))
         
         # 3. ПРЕВРАЩАЕМ ВАШ СПИСОК В КРАСИВЫЙ ВИД
         recommendations_list = "\n".join([f"• {hitalic(rec_artist)}" for rec_artist in artists])
-        text += recommendations_list
+        full_text = text_header + "\n" + recommendations_list
 
         # 4. ОТПРАВЛЯЕМ СООБЩЕНИЕ
         try:
             await bot.send_message(
                 chat_id=user_id,
-                text=text,
+                text=full_text,
                 parse_mode=ParseMode.HTML,
             )
             print(f"--> Отправлено уведомление с рекомендациями пользователю {user_id}")
@@ -65,10 +64,12 @@ async def notification_handler(bot: Bot, connection, pid, channel, payload):
     
     artist_info = data.get('artist', {})
     artist_id = artist_info.get('artist_id')
-    artist_name = artist_info.get('name', 'Неизвестный артист')
+    # --- ИЗМЕНЕНИЕ --- Получаем имя без значения по умолчанию
+    artist_name_payload = artist_info.get('name') 
     
     event_id = data.get('event_id')
-    event_title = data.get('title', 'Новое событие')
+    # --- ИЗМЕНЕНИЕ --- Получаем заголовок без значения по умолчанию
+    event_title_payload = data.get('title')
     
     venue_info = data.get('venue', {})
     event_city_name = venue_info.get('city_name', '')
@@ -79,7 +80,7 @@ async def notification_handler(bot: Bot, connection, pid, channel, payload):
         return
 
     subscribers = await db_notifier.get_favorite_subscribers_by_artist(artist_id)
-    print(f"Найдено подписчиков на '{artist_name}' (ID: {artist_id}): {len(subscribers)} чел.")
+    print(f"Найдено подписчиков на '{artist_name_payload or 'ID:'+str(artist_id)}': {len(subscribers)} чел.")
 
     for fav_entry in subscribers:
         user = fav_entry.user
@@ -88,21 +89,29 @@ async def notification_handler(bot: Bot, connection, pid, channel, payload):
         is_priority_region = False
         if user_regions and (event_country_name in user_regions or event_city_name in user_regions):
             is_priority_region = True
-            
+        
+        # --- ИЗМЕНЕНИЕ --- Создаем лексикон для КОНКРЕТНОГО пользователя
         lexicon = Lexicon(user.language_code)
         emoji = "🔥" if is_priority_region else "🔔"
         
-        text = (
-            f"{emoji} У вашего избранного артиста {hbold(artist_name)} появилось новое событие!\n\n"
-            f"🎵 {hbold(event_title)}\n"
-            f"📍 {event_city_name}, {event_country_name}"
+        # --- ИЗМЕНЕНИЕ --- Используем лексикон для значений по умолчанию
+        final_artist_name = artist_name_payload or lexicon.get('unknown_artist')
+        final_event_title = event_title_payload or lexicon.get('new_event_title')
+
+        # --- ИЗМЕНЕНИЕ --- Текст сообщения полностью формируется из лексикона
+        text = lexicon.get('new_event_for_favorite_notification').format(
+            emoji=emoji,
+            artist_name=hbold(final_artist_name),
+            event_title=hbold(final_event_title),
+            event_city=event_city_name,
+            event_country=event_country_name
         )
-        
+
         try:
             await bot.send_message(
                 chat_id=user.user_id,
                 text=text,
-                reply_markup=get_add_to_subscriptions_keyboard(event_id),
+                reply_markup=get_add_to_subscriptions_keyboard(event_id, lexicon),
                 parse_mode=ParseMode.HTML
             )
             print(f"--> Отправлено уведомление пользователю {user.user_id}")

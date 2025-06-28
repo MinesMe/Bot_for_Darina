@@ -10,9 +10,9 @@ def get_profile_keyboard(lexicon) -> InlineKeyboardMarkup:
     Новая клавиатура для меню профиля.
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="📍 Изменить основное гео", callback_data="edit_main_geo")
-    builder.button(text="🌍 Изменить общую мобильность", callback_data="edit_general_mobility")
-    builder.button(text="⭐ Мои подписки", callback_data="manage_my_subscriptions")
+    builder.button(text=lexicon.get('profile_button_location'), callback_data="edit_main_geo")
+    builder.button(text=lexicon.get('profile_general_geo'), callback_data="edit_general_mobility")
+    builder.button(text=lexicon.get('profile_button_manage_subs'), callback_data="manage_my_subscriptions")
     builder.adjust(1) # Каждая кнопка на новой строке
     return builder.as_markup()
 
@@ -40,7 +40,7 @@ def get_manage_subscriptions_keyboard(subscriptions: list, lexicon) -> InlineKey
             )
         builder.adjust(1)
     
-    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_profile_button'), callback_data="back_to_profile"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data="back_to_profile"))
     return builder.as_markup()
 
 
@@ -50,7 +50,7 @@ def get_edit_country_keyboard(countries: list, lexicon) -> InlineKeyboardMarkup:
     for country in countries:
         builder.button(text=country, callback_data=f"edit_country:{country}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="back_to_profile"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_profile'), callback_data="back_to_profile"))
     return builder.as_markup()
 
 def get_edit_city_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup:
@@ -60,8 +60,8 @@ def get_edit_city_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup:
         builder.button(text=city, callback_data=f"edit_city:{city}")
     builder.adjust(2)
     # --- ДОБАВЛЕНА КНОПКА ПОИСКА С УНИКАЛЬНЫМ CALLBACK ---
-    builder.row(InlineKeyboardButton(text="🔎 Найти другой город", callback_data="edit_search_for_city"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к выбору страны", callback_data="back_to_edit_country"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('find_another_city'), callback_data="edit_search_for_city"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_choose_country'), callback_data="back_to_edit_country"))
     return builder.as_markup()
 
 def get_edit_event_type_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
@@ -72,7 +72,7 @@ def get_edit_event_type_keyboard(lexicon, selected_types: list = None) -> Inline
         text = f"✅ {event_type}" if event_type in selected_types else f"⬜️ {event_type}"
         builder.button(text=text, callback_data=f"edit_toggle_event_type:{event_type}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="✅ Сохранить изменения", callback_data="finish_edit_preferences"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('save_changes'), callback_data="finish_edit_preferences"))
     return builder.as_markup()
 
 def get_edit_found_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboardMarkup:
@@ -81,5 +81,5 @@ def get_edit_found_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboar
     for city in found_cities:
         builder.button(text=city, callback_data=f"edit_city:{city}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к выбору города", callback_data="back_to_edit_city_list"))
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_choose_city'), callback_data="back_to_edit_city_list"))
     return builder.as_markup()

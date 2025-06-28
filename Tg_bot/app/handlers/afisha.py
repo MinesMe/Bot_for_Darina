@@ -12,7 +12,7 @@ from calendar import monthrange
 from ..database.requests import requests as db
 from app import keyboards as kb
 from ..lexicon import Lexicon
-from app.utils import format_events_with_headers, format_events_for_response
+from app.utils.utils import format_events_with_headers, format_events_for_response
 
 router = Router()
 
@@ -40,7 +40,7 @@ async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwa
     """Отправляет длинный текст, разбивая его на части, и крепит клавиатуру к последней."""
     MESSAGE_LIMIT = 4096
     if not text.strip():
-        await message.answer("По вашему запросу ничего не найдено.", reply_markup=kwargs.get('reply_markup'))
+        await message.answer(lexicon.get('afisha_nothing_found_for_query'), reply_markup=kwargs.get('reply_markup'))
         return
 
     if len(text) <= MESSAGE_LIMIT:
@@ -155,7 +155,7 @@ async def afisha_by_my_prefs(callback: CallbackQuery, state: FSMContext):
     user_prefs = await db.get_user_preferences(user_id)
     
     if not user_prefs or not user_prefs.get("home_city") or not user_prefs.get("preferred_event_types"):
-        await callback.answer("Ваши предпочтения не настроены. Пожалуйста, настройте их в Профиле.", show_alert=True)
+        await callback.answer(lexicon.get('afisha_prefs_not_configured_alert'), show_alert=True)
         return
 
     data = await state.get_data()
@@ -169,10 +169,11 @@ async def afisha_by_my_prefs(callback: CallbackQuery, state: FSMContext):
             
     response_text, event_ids = await format_events_with_headers(events_by_category)
     
-    await callback.message.edit_text(f"Вот что я нашел по вашим предпочтениям для г. {hbold(city_name)}:", parse_mode=ParseMode.HTML)
+    header_text = lexicon.get('afisha_results_by_prefs_header').format(city_name=hbold(city_name))
+    await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
     
     if not event_ids:
-        await callback.message.answer("По вашим предпочтениям и выбранному периоду ничего не найдено.")
+        await callback.message.answer(lexicon.get('afisha_no_results_for_prefs_period'))
         await state.clear()
         return
 
@@ -188,12 +189,13 @@ async def afisha_by_temporary_prefs_start(callback: CallbackQuery, state: FSMCon
     await state.set_state(AfishaFlowFSM.temp_choosing_city)
     lexicon = Lexicon(callback.from_user.language_code)
     user_prefs = await db.get_user_preferences(callback.from_user.id)
-    country_name = user_prefs.get('home_country') if user_prefs else "Беларусь"
+    country_name = user_prefs.get('home_country') if user_prefs else lexicon.get('default_country_for_temp_search')
     
     await state.update_data(temp_country=country_name)
     top_cities = await db.get_top_cities_for_country(country_name)
+    text = lexicon.get('afisha_temp_select_city_prompt').format(country_name=hbold(country_name))
     await callback.message.edit_text(
-        f"Страна: {hbold(country_name)}. Теперь выберите город.",
+        text,
         reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
         parse_mode=ParseMode.HTML
     )
@@ -208,8 +210,9 @@ async def temp_city_selected(callback: CallbackQuery, state: FSMContext):
     await state.update_data(temp_event_types=[]) 
     
     lexicon = Lexicon(callback.from_user.language_code)
+    text = lexicon.get('afisha_temp_select_types_prompt').format(city_name=hbold(city_name))
     await callback.message.edit_text(
-        f"Город: {hbold(city_name)}. Теперь выберите интересующие типы событий:",
+        text,
         reply_markup=kb.get_event_type_selection_keyboard(lexicon, []),
         parse_mode=ParseMode.HTML
     )
@@ -241,7 +244,7 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
     date_from, date_to = data.get("date_from"), data.get("date_to")
 
     if not event_types:
-        await callback.answer("Пожалуйста, выберите хотя бы один тип событий!", show_alert=True)
+        await callback.answer(lexicon.get('select_at_least_one_event_type_alert'), show_alert=True)
         return
         
     events_by_category = {}
@@ -251,10 +254,11 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
             
     response_text, event_ids = await format_events_with_headers(events_by_category)
     
-    await callback.message.edit_text(f"Вот что я нашел для г. {hbold(city_name)}:", parse_mode=ParseMode.HTML)
+    header_text = lexicon.get('afisha_results_for_city_header').format(city_name=hbold(city_name))
+    await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
 
     if not event_ids:
-        await callback.message.answer("По вашему запросу ничего не найдено.")
+        await callback.message.answer(lexicon.get('afisha_nothing_found_for_query'))
         await state.clear()
         return
 
@@ -307,8 +311,9 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "add_events_to_subs")
 async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    lexicon = Lexicon(callback.from_user.language_code)
     if not data.get("last_shown_event_ids"):
-        await callback.answer("Сначала нужно найти события через Афишу или Поиск.", show_alert=True)
+        await callback.answer(lexicon.get('afisha_must_find_events_first_alert'), show_alert=True)
         return
 
     await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
