@@ -34,6 +34,15 @@ EVENT_TYPE_EMOJI = {
 def get_event_type_keys() -> list[str]:
     return list(EVENT_TYPE_MAPPING.keys())
 
+def get_event_type_display_name(key: str, lang_code: str) -> str:
+    # По умолчанию 'en', если для языка нет перевода
+    lang = 'ru' if lang_code == 'ru' else 'en'
+    return EVENT_TYPE_MAPPING.get(key, {}).get(lang, key)
+
+def get_event_type_storage_value(key: str) -> str:
+    # Всегда возвращаем русскую версию. Если ее нет, возвращаем сам ключ.
+    return EVENT_TYPE_MAPPING.get(key, {}).get('ru', key)
+
 # Вспомогательная функция для получения названия на нужном языке
 def get_event_type_name(key: str, lang_code: str) -> str:
     # По умолчанию 'en', если для языка нет перевода

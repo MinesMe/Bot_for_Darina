@@ -5,7 +5,12 @@ import locale
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from dateutil.relativedelta import relativedelta
-from app.lexicon import EVENT_TYPE_EMOJI
+from app.lexicon import (
+    EVENT_TYPE_EMOJI,
+    get_event_type_keys,
+    get_event_type_display_name,
+    get_event_type_storage_value
+)
 
 # --- КОНСТАНТЫ ---
 
@@ -43,14 +48,38 @@ def get_home_city_selection_keyboard(top_cities: list, lexicon) -> InlineKeyboar
 
 
 def get_event_type_selection_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
-    if selected_types is None: selected_types = []
+    """
+    Создает клавиатуру выбора типов событий.
+    - Текст на кнопке зависит от языка пользователя.
+    - В callback_data всегда отправляется РУССКОЕ название.
+    - `selected_types` теперь ожидает список русских названий.
+    """
+    if selected_types is None:
+        selected_types = []
     builder = InlineKeyboardBuilder()
-    for event_type in lexicon.EVENT_TYPES:
-        text = f"✅ {event_type}" if event_type in selected_types else f"⬜️ {event_type}"
-        builder.button(text=text, callback_data=f"toggle_event_type:{event_type}")
+
+    # 1. Получаем список универсальных ключей ('concert', 'theater'...)
+    event_keys = get_event_type_keys()
+
+    # 2. Итерируемся по ключам, а не по названиям
+    for key in event_keys:
+        # 3. Получаем текст для отображения на языке пользователя
+        display_name = get_event_type_display_name(key, lexicon.lang_code)
+
+        # 4. Получаем значение для сохранения в БД (всегда русское)
+        storage_value = get_event_type_storage_value(key)
+
+        # 5. Проверяем, выбрано ли уже это значение
+        text = f"✅ {display_name}" if storage_value in selected_types else f"⬜️ {display_name}"
+
+        # 6. Создаем кнопку: текст для юзера, русское значение для хэндлера
+        builder.button(text=text, callback_data=f"toggle_event_type:{storage_value}")
+
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data="finish_preferences_selection:{True}"))
+    # Ваша кнопка "Готово" остается без изменений
+    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data="finish_preferences_selection:True"))
     return builder.as_markup()
+
 
 def get_back_to_city_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()

@@ -8,6 +8,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.markdown import hbold
 from datetime import datetime, timedelta
 from calendar import monthrange
+from aiogram.exceptions import TelegramBadRequest
 
 from ..database.requests import requests as db
 from app import keyboards as kb
@@ -255,7 +256,14 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
     response_text, event_ids = await format_events_with_headers(events_by_category)
     
     header_text = lexicon.get('afisha_results_for_city_header').format(city_name=hbold(city_name))
-    await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
+    try:
+        await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
+    except TelegramBadRequest as e:
+        # Проверяем, что это именно та ошибка, которую мы хотим проигнорировать
+        if "message is not modified" in str(e):
+            pass  # Просто пропускаем, если сообщение не изменилось
+        else:
+            raise  # Если это другая ошибка "Bad Request", то ее нужно увидеть
 
     if not event_ids:
         await callback.message.answer(lexicon.get('afisha_nothing_found_for_query'))
