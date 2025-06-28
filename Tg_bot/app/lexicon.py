@@ -224,6 +224,9 @@ class Lexicon:
                 'reminder_user_blocked_log': "Пользователь {user_id} заблокировал бота. Деактивируем его подписки.",
                 'reminder_failed_to_send_log': "Не удалось отправить уведомление пользователю {user_id}: {e}",
 
+                'no_info': "Нет информации",
+                'no_future_events_for_favorites': "На данный момент для них нет предстоящих событий. Мы сообщим, как только что-то появится!",
+
                 
             },
             'be': {
@@ -394,6 +397,9 @@ class Lexicon:
                 'reminder_event_item': "<b>{index}. {title}</b>\n📅 {date}\n🎟️ Tickets: {tickets}",
                 'reminder_user_blocked_log': "User {user_id} has blocked the bot. Deactivating their subscriptions.",
                 'reminder_failed_to_send_log': "Failed to send reminder to user {user_id}: {e}",
+
+                'no_info': "No information",
+                'no_future_events_for_favorites': "Currently, there are no upcoming events for them. We'll notify you as soon as something is announced!",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

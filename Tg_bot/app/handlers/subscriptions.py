@@ -13,6 +13,10 @@ from app.utils.utils import format_events_for_response
 from .favorities import show_favorites_list 
 from ..lexicon import Lexicon
 
+from aiogram.enums import ParseMode
+from app.utils.utils import format_events_by_artist # Наш новый форматер
+from app.handlers.afisha import AddToSubsFSM, send_long_message
+
 
 router = Router()
 
@@ -197,35 +201,90 @@ async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContex
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "finish_adding_subscriptions")
 async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext):
-    """Завершает сессию и сохраняет все в ИЗБРАННОЕ."""
+    """
+    Завершает сессию, сохраняет все в ИЗБРАННОЕ и показывает найденные события.
+    """
     data = await state.get_data()
     pending_items = data.get('pending_favorites', [])
+    lexicon = Lexicon(callback.from_user.language_code)
 
     if not pending_items:
         await callback.answer(lexicon.get('nothing_to_add_alert'), show_alert=True)
         return
 
+    added_artist_ids = []
     added_artist_names = []
+    
+    # 1. Сохраняем артистов в базу данных
     async with db.async_session() as session:
         for item_data in pending_items:
             artist_name = item_data['item_name']
             regions_to_save = item_data['regions']
+            
+            # Находим ID артиста по его имени
             artist_obj_stmt = select(db.Artist).where(db.Artist.name == artist_name)
             artist = (await session.execute(artist_obj_stmt)).scalar_one_or_none()
+            
             if artist:
-                # Вызываем функцию добавления в избранное
                 await db.add_artist_to_favorites(session, callback.from_user.id, artist.artist_id, regions_to_save)
+                added_artist_ids.append(artist.artist_id)
                 added_artist_names.append(artist.name)
+        
         await session.commit()
 
-    await state.clear()
-
-    lexicon = Lexicon(callback.from_user.language_code)
-    if added_artist_names:
-        final_text = lexicon.get('favorites_added_final').format(count=len(added_artist_names))
-        await callback.message.edit_text(final_text, parse_mode="HTML")
-    else:
+    if not added_artist_ids:
         await callback.message.edit_text(lexicon.get('failed_to_add_artists'))
+        await callback.answer()
+        await state.clear()
+        return
+
+    # 2. Ищем будущие события для только что добавленных артистов
+    found_events = await db.get_future_events_for_artists(added_artist_ids)
+    
+    # Редактируем исходное сообщение, чтобы пользователь видел, что процесс идет
+    # (например, "Добавлено N артистов. Ищем события...")
+    initial_feedback_text = lexicon.get('favorites_added_final').format(count=len(added_artist_names))
+    await callback.message.edit_text(initial_feedback_text, parse_mode="HTML")
+
+    # 3. Проверяем, нашлись ли события
+    if not found_events:
+        # Событий нет. Сообщаем об этом и завершаем.
+        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
+        await callback.message.answer(no_events_text) # Отправляем доп. сообщение
+        await callback.answer()
+        await state.clear()
+        return
+
+    # 4. События найдены. Форматируем их и отправляем.
+    # Вызываем наш новый форматер из utils.py
+    response_text, event_ids_to_subscribe = await format_events_by_artist(found_events, lexicon)
+    
+    if not response_text:
+        # На случай, если форматер ничего не вернул (например, все события оказались дублями)
+        # Повторяем логику "событий не найдено"
+        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
+        await callback.message.answer(no_events_text)
+        await callback.answer()
+        await state.clear()
+        return
+
+    # 5. Сохраняем ID найденных событий в FSM для следующего шага
+    # и переводим пользователя в состояние ожидания ввода номеров.
+    # Мы переиспользуем FSM из `afisha.py`!
+    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+    await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
+    
+    # 6. Отправляем большое сообщение с событиями и кнопкой "Добавить в подписки"
+    # Используем send_long_message из афиши, чтобы обойти лимиты Telegram
+    await send_long_message(
+        message=callback.message,
+        text=response_text,
+        lexicon=lexicon,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        # Клавиатура из афиши, которая ведет на `add_events_to_subs`
+        reply_markup=kb.get_afisha_actions_keyboard(lexicon) 
+    )
     await callback.answer()
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "write_artist")

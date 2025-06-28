@@ -2,7 +2,7 @@
 
 import logging
 from sqlalchemy import select, delete, and_, or_, func, distinct, union, update
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
 from thefuzz import process as fuzzy_process, fuzz
 from datetime import datetime
@@ -719,6 +719,7 @@ async def get_favorite_details(user_id: int, artist_id: int) -> UserFavorite | N
         return result.scalar_one_or_none()
     
 async def update_favorite_regions(user_id: int, artist_id: int, new_regions: list):
+
     """Обновляет регионы для конкретного избранного."""
     async with async_session() as session:
         stmt = (
@@ -728,3 +729,47 @@ async def update_favorite_regions(user_id: int, artist_id: int, new_regions: lis
         )
         await session.execute(stmt)
         await session.commit()
+
+async def get_future_events_for_artists(artist_ids: list[int]) -> list[Event]:
+    """
+    Находит все предстоящие события для заданного списка ID артистов.
+    События, у которых дата не указана (date_start is None), также считаются будущими.
+    Загружает связанные данные для минимизации последующих запросов.
+
+    Args:
+        artist_ids: Список ID артистов.
+
+    Returns:
+        Список объектов Event.
+    """
+    if not artist_ids:
+        return []
+
+    async with async_session() as session:
+        today = datetime.now()
+        
+        stmt = (
+            select(Event)
+            .join(Event.artists) # Соединяем с EventArtist
+            .where(
+                EventArtist.artist_id.in_(artist_ids),
+                or_(
+                    Event.date_start >= today,
+                    Event.date_start.is_(None) # Включаем события без даты
+                )
+            )
+            .options(
+                # Загружаем артистов, чтобы знать, к кому относится событие
+                selectinload(Event.artists).selectinload(EventArtist.artist), 
+                # Загружаем полную информацию о месте проведения
+                joinedload(Event.venue).joinedload(Venue.city).joinedload(City.country),
+                # Загружаем ссылки на билеты
+                selectinload(Event.links)
+            )
+            .order_by(Event.date_start.asc().nulls_last()) # Сортируем по дате
+            .distinct()
+        )
+        
+        result = await session.execute(stmt)
+        return result.scalars().all()
+    

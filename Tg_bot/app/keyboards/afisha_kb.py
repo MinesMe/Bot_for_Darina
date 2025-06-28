@@ -7,15 +7,13 @@ from app.lexicon import EVENT_TYPE_EMOJI
 
 def get_afisha_actions_keyboard(lexicon) -> InlineKeyboardMarkup:
     """
-    Создает клавиатуру с действиями, доступными после просмотра списка событий.
-    На данный момент это только кнопка "Добавить в подписки".
+    Клавиатура с действиями после показа списка событий (из Афиши или после добавления в избранное).
     """
     builder = InlineKeyboardBuilder()
     builder.button(
         text=lexicon.get('afisha_add_to_subs_button'), 
         callback_data="add_events_to_subs"
     )
-    # В будущем сюда можно добавить кнопки "Отфильтровать еще" или "Поделиться"
     return builder.as_markup()
 
 def get_date_period_keyboard(lexicon) -> InlineKeyboardMarkup:

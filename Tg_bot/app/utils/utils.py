@@ -1,12 +1,13 @@
 # app/handlers/common.py
 
+from collections import defaultdict
 from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ParseMode
 from aiogram.types import Message, CallbackQuery, BotCommand
-from aiogram.utils.markdown import hbold
+from aiogram.utils.markdown import hbold,hitalic
 
 from ..database.requests import requests as db
 from ..database.models import async_session
@@ -95,3 +96,88 @@ async def format_events_for_response(events: list) -> str:
         response_parts.append(event_card)
     separator = "\n\n" + "—" * 15 + "\n\n"
     return separator.join(response_parts)
+
+async def format_events_by_artist(
+    events: list, # Принимает список объектов Event
+    lexicon: Lexicon
+) -> tuple[str | None, list[int] | None]:
+    """
+    Форматирует список событий, группируя их по артистам.
+
+    Args:
+        events: Список объектов Event, полученных из БД.
+        lexicon: Экземпляр Lexicon для локализации.
+
+    Returns:
+        Кортеж (отформатированный текст, упорядоченный список event_id).
+        Если событий нет, возвращает (None, None).
+    """
+    if not events:
+        return None, None
+
+    # 1. Группируем события по имени артиста
+    events_by_artist = defaultdict(list)
+    for event in events:
+        # У одного события может быть несколько артистов, проходимся по всем
+        for event_artist in event.artists:
+            events_by_artist[event_artist.artist.name].append(event)
+    
+    # Сортируем артистов по алфавиту для предсказуемого вывода
+    sorted_artist_names = sorted(events_by_artist.keys())
+
+    response_parts = []
+    event_ids_in_order = []
+    counter = 1  # Сквозной счетчик для нумерации
+
+    # 2. Формируем текстовые блоки для каждого артиста
+    for artist_name in sorted_artist_names:
+        # Заголовок для группы событий артиста
+        response_parts.append(f"\n\n——— 🎤 {hbold(artist_name.upper())} ———\n")
+
+        # Получаем уникальные события для этого артиста, чтобы не было дублей
+        unique_events_for_artist = sorted(
+            list(set(events_by_artist[artist_name])), 
+            key=lambda e: (e.date_start is None, e.date_start) # Сортируем по дате
+        )
+
+        for event in unique_events_for_artist:
+            # Проверяем, не добавили ли мы уже это событие под эгидой другого артиста
+            if event.event_id in event_ids_in_order:
+                continue
+
+            event_ids_in_order.append(event.event_id)
+            
+            # --- Форматируем карточку одного события (почти как в reminder) ---
+            
+            # Дата
+            date_str = event.date_start.strftime('%d.%m.%Y %H:%M') if event.date_start else lexicon.get('date_not_specified')
+            
+            # Место
+            place_info = "—"
+            if event.venue:
+                city_name = event.venue.city.name if event.venue.city else ""
+                country_name = event.venue.city.country.name if event.venue.city and event.venue.city.country else ""
+                place_info = f"{event.venue.name}, {city_name} ({country_name})"
+
+            # Билеты
+            tickets_str = event.tickets_info if event.tickets_info and event.tickets_info != "В наличии" else lexicon.get('no_info') # Добавьте 'no_info': 'Нет информации' в лексикон
+            
+            # Ссылка
+            url = event.links[0].url if event.links else None
+            title_text = f"{counter}. {event.title}"
+            title_with_link = f'<a href="{url}">{hbold(title_text)}</a>' if url else hbold(title_text)
+            
+            # Собираем карточку
+            event_card = (
+                f"{title_with_link}\n"
+                f"📅 {date_str}\n"
+                f"📍 {hitalic(place_info)}\n"
+                f"🎟️ Билеты: {hitalic(tickets_str)}"
+            )
+            response_parts.append(event_card)
+            counter += 1
+
+    if not response_parts:
+        return None, None
+        
+    return "\n".join(response_parts), event_ids_in_order
