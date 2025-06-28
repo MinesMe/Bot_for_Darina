@@ -773,3 +773,51 @@ async def get_future_events_for_artists(artist_ids: list[int]) -> list[Event]:
         result = await session.execute(stmt)
         return result.scalars().all()
     
+async def get_or_create_artists_by_name(names: list[str]) -> list[Artist]:
+    """
+    Находит артистов по списку имен. Если артист не найден, создает его.
+    Работает с именами в нижнем регистре.
+
+    Args:
+        names: Список имен артистов в нижнем регистре.
+
+    Returns:
+        Список объектов Artist (существующих и только что созданных).
+    """
+    if not names:
+        return []
+
+    async with async_session() as session:
+        # 1. Найти всех уже существующих артистов одним запросом
+        existing_artists_stmt = select(Artist).where(func.lower(Artist.name).in_(names))
+        existing_artists_result = await session.execute(existing_artists_stmt)
+        existing_artists_list = existing_artists_result.scalars().all()
+        
+        existing_artists_map = {artist.name.lower(): artist for artist in existing_artists_list}
+
+        # 2. Определить, каких артистов нужно создать
+        names_to_create = []
+        for name in names:
+            if name not in existing_artists_map:
+                names_to_create.append(name)
+
+        # 3. Создать всех недостающих артистов одним махом
+        new_artists = []
+        if names_to_create:
+            for name_to_create in names_to_create:
+                # Создаем объект, но пока не коммитим
+                new_artist = Artist(name=name_to_create)
+                session.add(new_artist)
+                new_artists.append(new_artist)
+            
+            # Делаем flush, чтобы получить ID для новых артистов, но еще не коммитим транзакцию
+            await session.flush()
+            print(f"Добавлено в БД {len(new_artists)} новых артистов: {', '.join(names_to_create)}")
+
+        # 4. Собираем итоговый список из существующих и новых
+        final_artist_list = existing_artists_list + new_artists
+        
+        # Коммитим все изменения (создание новых артистов)
+        await session.commit()
+        
+        return final_artist_list

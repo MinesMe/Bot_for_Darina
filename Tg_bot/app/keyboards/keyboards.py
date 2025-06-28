@@ -125,86 +125,47 @@ def get_region_selection_keyboard(
     return builder.as_markup()
 
 
+def get_recommended_artists_keyboard(
+    artists: list, # Ожидаем список объектов Artist
+    lexicon,
+    selected_artist_ids: set = None
+) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру для выбора рекомендованных артистов.
 
+    Args:
+        artists: Список объектов Artist для отображения.
+        lexicon: Экземпляр Lexicon.
+        selected_artist_ids: Множество (set) ID артистов, которые уже выбраны.
+    """
+    if selected_artist_ids is None:
+        selected_artist_ids = set()
+        
+    builder = InlineKeyboardBuilder()
 
+    for artist in artists:
+        # Используем .title() для красивого отображения имени с заглавной буквы
+        display_name = artist.name.title()
+        
+        # Проверяем, выбран ли артист, и добавляем соответствующий эмодзи
+        text = f"✅ {display_name}" if artist.artist_id in selected_artist_ids else f"⬜️ {display_name}"
+        
+        # В callback_data зашиваем ID артиста для надежности
+        builder.button(text=text, callback_data=f"rec_toggle:{artist.artist_id}")
 
-
-
-
-
-
-# --- ОСТАЛЬНЫЕ КЛАВИАТУРЫ ---
-
-
-
-# def get_paginated_artists_keyboard(all_artists: list, selected_artists: set, page: int = 0) -> InlineKeyboardMarkup:
-#     builder = InlineKeyboardBuilder()
-#     PAGE_SIZE = 5
-#     start, end = page * PAGE_SIZE, (page + 1) * PAGE_SIZE
-#     artists_on_page = all_artists[start:end]
-#     for artist in artists_on_page:
-#         text = f"✅ {artist}" if artist in selected_artists else f"⬜️ {artist}"
-#         builder.button(text=text, callback_data=f"toggle_artist_subscribe:{artist}")
-#     builder.adjust(1)
-#     total_pages = (len(all_artists) + PAGE_SIZE - 1) // PAGE_SIZE
-#     if total_pages > 1:
-#         pagination_buttons = []
-#         if page > 0:
-#             pagination_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"paginate_artists:{page - 1}"))
-#         pagination_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ignore"))
-#         if page < total_pages - 1:
-#             pagination_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"paginate_artists:{page + 1}"))
-#         builder.row(*pagination_buttons)
-#     builder.row(InlineKeyboardButton(text="✅ Готово", callback_data="finish_artist_selection"))
-#     return builder.as_markup()
-
-
-# def get_cities_keyboard(cities: list, category: str) -> InlineKeyboardMarkup:
-#     builder = InlineKeyboardBuilder()
-#     for city in cities:
-#         builder.button(text=city, callback_data=f"city:{city}:{category}")
-#     builder.adjust(2)
-#     return builder.as_markup()
-
-#---------- АФИША ----------
-
-# def get_afisha_settings()-> InlineKeyboardMarkup:
-#     builder = InlineKeyboardBuilder()
-#     builder.row(InlineKeyboardButton(text="Настроить", callback_data=f"afisha_main_geo_settings"))
-#     builder.row(InlineKeyboardButton(text="Пропустить настройку", callback_data=f"skip_afisha_main_geo"))
-#     return builder.as_markup()
-
-# def get_afisha_settings_type()-> InlineKeyboardMarkup:
-#     builder = InlineKeyboardBuilder()
-#     builder.row(InlineKeyboardButton(text="По мои настройкам", callback_data=f"afisha_defautl_type_settings"))
-#     builder.row(InlineKeyboardButton(text="Другую", callback_data=f"afisha_another_type_settings"))
-#     return builder.as_markup()
-
-
-
-
-
-
-
-
-
-# --- НОВЫЙ БЛОК: Клавиатуры для раздела "Избранное" ---
-
-# def get_favorites_menu_keyboard( favorites: list, lexicon) -> InlineKeyboardMarkup:
-#     """Генерирует клавиатуру для главного меню 'Избранное'."""
-#     builder = InlineKeyboardBuilder()
+    # Кнопки располагаются по одной в ряду для лучшей читаемости
+    builder.adjust(1)
     
-#     if favorites:
-#         for fav in favorites:
-#             # Обрезаем текст кнопки, чтобы избежать ошибки Telegram
-#             button_text = fav.name[:40] + '...' if len(fav.name) > 40 else fav.name
-#             builder.button(text=f"⭐ {button_text}", callback_data=f"view_favorite:{fav.artist_id}")
-#         builder.adjust(1)
-    
-#     # Кнопка "Добавить" переехала в другой модуль.
-#     # Кнопка "Настроить мобильность" теперь в меню управления конкретным артистом.
-    
-#     return builder.as_markup()
+    # Добавляем кнопку "Готово", только если выбран хотя бы один артист
+    if selected_artist_ids:
+        builder.row(
+            InlineKeyboardButton(
+                text=lexicon.get('finish_button'),
+                callback_data="rec_finish"
+            )
+        )
+        
+    return builder.as_markup()
 
 
 

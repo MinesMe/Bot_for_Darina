@@ -62,6 +62,12 @@ class Artist(Base):
     events = relationship("EventArtist", back_populates="artist")
     # НОВАЯ СВЯЗЬ: Пользователи, добавившие этого "артиста" в "Избранное"
     user_associations = relationship("UserFavorite", back_populates="artist", cascade="all, delete-orphan")
+    # --- ДОБАВЬТЕ ЭТОТ МЕТОД ---
+    def to_dict(self):
+        return {
+            'artist_id': self.artist_id,
+            'name': self.name
+        }
 
 class Venue(Base):
     __tablename__ = "venues"

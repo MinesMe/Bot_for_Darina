@@ -2,45 +2,52 @@ from datetime import datetime, timedelta
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
+from app.database.requests import requests as db # Импортируем наш модуль с запросами
 
 from .query import get_concert_recommendations_query, get_local_event_recommendations_query
 from app.database.models import async_session # Импортируем async_session из models.py
 
 load_dotenv()
 
-async def get_recommended_artists(artist_name):
+async def get_recommended_artists(artist_name: str):
+    """
+    Получает имена рекомендованных артистов от Gemini,
+    находит их в БД или СОЗДАЕТ, если их нет.
 
+    Возвращает:
+        list[Artist]: Список объектов Artist (существующих и/или только что созданных).
+    """
     gemini_api_key = os.getenv('GEMINI_API_KEY')
     if not gemini_api_key:
         raise ValueError("GEMINI_API_KEY не установлен.")
     genai.configure(api_key=gemini_api_key)
 
-
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
     prompt = (
-        f"Назови 1 артиста, которого обычно слушают вместе с {artist_name}, "
-        f"1, который очень похож на {artist_name}, и 1, который отличается "
-        f"какой-то изюминкой от {artist_name}. "
-        f"Ответь только именами артистов, разделенными запятыми, без дополнительных символов. Назови всего 3 артиста"
+        f"Назови 3 артиста, похожих на {artist_name}. "
+        f"Ответь только именами артистов, разделенными запятыми, без дополнительных символов и нумерации. Всего 3 артиста."
     )
 
     try:
         response = await model.generate_content_async(prompt)
-        # Очищаем и форматируем ответ, чтобы получить только названия артистов
         raw_artists = response.text.strip()
-        # Разделяем строку по запятым и убираем лишние пробелы
-        recommended_artists = [artist.strip() for artist in raw_artists.split(',') if artist.strip()]
+        # Приводим все имена к нижнему регистру для поиска/создания в БД
+        recommended_names_lower = [artist.strip().lower() for artist in raw_artists.split(',') if artist.strip()]
 
-        if len(recommended_artists) != 3:
-            print(f"Предупреждение: Gemini вернул не 3 артиста: {recommended_artists}. Возвращаем пустой список.")
+        if not recommended_names_lower:
+            print(f"Предупреждение: Gemini не вернул рекомендации для '{artist_name}'.")
             return []
 
-        print(f"Успешно получены рекомендации для '{artist_name}'.")
-        return recommended_artists
+        # --- ПОИСК ИЛИ СОЗДАНИЕ АРТИСТОВ В НАШЕЙ БД ---
+        # Вызываем нашу новую функцию из requests.py
+        verified_artists = await db.get_or_create_artists_by_name(recommended_names_lower)
+        
+        print(f"Успешно обработаны рекомендации для '{artist_name}'.")
+        return verified_artists
 
     except Exception as e:
-        print(f"Произошла ошибка при запросе к Gemini API: {e}")
+        print(f"Произошла ошибка при запросе к Gemini API или работе с БД: {e}")
         return []
 
 def get_concert_recommendations(country_name: str, target_date_str: str):
