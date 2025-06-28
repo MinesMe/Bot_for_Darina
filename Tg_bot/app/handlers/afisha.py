@@ -12,7 +12,7 @@ from calendar import monthrange
 from ..database.requests import requests as db
 from app import keyboards as kb
 from ..lexicon import Lexicon
-from .common import format_events_with_headers, format_events_for_response
+from app.utils import format_events_with_headers, format_events_for_response
 
 router = Router()
 
@@ -26,9 +26,9 @@ class AfishaFlowFSM(StatesGroup):
     temp_waiting_city_input = State()
     temp_choosing_event_types = State()
 
-# FSM для поиска (остается без изменений)
-class SearchGlobalFSM(StatesGroup):
-    waiting_for_query = State()
+# # FSM для поиска (остается без изменений)
+# class SearchGlobalFSM(StatesGroup):
+#     waiting_for_query = State()
 
 # FSM для добавления в подписки
 class AddToSubsFSM(StatesGroup):
@@ -63,6 +63,20 @@ async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwa
             'disable_web_page_preview': kwargs.get('disable_web_page_preview')
         }
         await message.answer(part, **final_kwargs)
+
+async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    date_from, date_to = data.get("date_from"), data.get("date_to")
+    
+    await state.set_state(AfishaFlowFSM.choosing_filter_type)
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.message.edit_text(
+        lexicon.get('afisha_choose_filter_type_prompt').format(
+            date_from=date_from.strftime('%d.%m.%Y'),
+            date_to=date_to.strftime('%d.%m.%Y')
+        ),
+        reply_markup=kb.get_filter_type_choice_keyboard(lexicon)
+    )
 
 
 # --- НОВАЯ ТОЧКА ВХОДА В АФИШУ ---
@@ -133,22 +147,6 @@ async def process_month_choice(callback: CallbackQuery, state: FSMContext):
     await state.update_data(date_from=date_from, date_to=date_to)
     await show_filter_type_choice(callback, state)
 
-# --- ХЕЛПЕР для показа меню выбора типа фильтра ---
-async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    date_from, date_to = data.get("date_from"), data.get("date_to")
-    
-    await state.set_state(AfishaFlowFSM.choosing_filter_type)
-    lexicon = Lexicon(callback.from_user.language_code)
-    await callback.message.edit_text(
-        lexicon.get('afisha_choose_filter_type_prompt').format(
-            date_from=date_from.strftime('%d.%m.%Y'),
-            date_to=date_to.strftime('%d.%m.%Y')
-        ),
-        reply_markup=kb.get_filter_type_choice_keyboard(lexicon)
-    )
-
-# --- ОБРАБОТКА ВЫБОРА ТИПА ФИЛЬТРА ---
 
 @router.callback_query(AfishaFlowFSM.choosing_filter_type, F.data == "filter_type:my_prefs")
 async def afisha_by_my_prefs(callback: CallbackQuery, state: FSMContext):
@@ -268,42 +266,42 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
     )
 
 # --- ПОИСК (остается без изменений, но можно будет добавить и ему выбор даты) ---
-@router.message(F.text.in_(['🔎 Поиск', '🔎 Search', '🔎 Пошук'])) 
-async def menu_search(message: Message, state: FSMContext): 
-    await state.clear()
-    await state.set_state(SearchGlobalFSM.waiting_for_query)
-    lexicon = Lexicon(message.from_user.language_code)
-    await message.answer(lexicon.get('search_prompt_enter_query_v2'))
+# @router.message(F.text.in_(['🔎 Поиск', '🔎 Search', '🔎 Пошук'])) 
+# async def menu_search(message: Message, state: FSMContext): 
+#     await state.clear()
+#     await state.set_state(SearchGlobalFSM.waiting_for_query)
+#     lexicon = Lexicon(message.from_user.language_code)
+#     await message.answer(lexicon.get('search_prompt_enter_query_v2'))
 
-@router.message(SearchGlobalFSM.waiting_for_query, F.text)
-async def search_query_handler(message: Message, state: FSMContext): 
-    user_id = message.from_user.id
-    lexicon = Lexicon(message.from_user.language_code)
+# @router.message(SearchGlobalFSM.waiting_for_query, F.text)
+# async def search_query_handler(message: Message, state: FSMContext): 
+#     user_id = message.from_user.id
+#     lexicon = Lexicon(message.from_user.language_code)
     
-    user_prefs = await db.get_user_preferences(user_id)
-    search_regions = None
-    if user_prefs and user_prefs.get("home_country") and user_prefs.get("home_city"):
-        search_regions = [user_prefs["home_country"], user_prefs["home_city"]]
+#     user_prefs = await db.get_user_preferences(user_id)
+#     search_regions = None
+#     if user_prefs and user_prefs.get("home_country") and user_prefs.get("home_city"):
+#         search_regions = [user_prefs["home_country"], user_prefs["home_city"]]
 
-    await message.answer(
-        lexicon.get('search_searching_for_query_v2').format(query_text=hbold(message.text)),
-        parse_mode=ParseMode.HTML
-    )
+#     await message.answer(
+#         lexicon.get('search_searching_for_query_v2').format(query_text=hbold(message.text)),
+#         parse_mode=ParseMode.HTML
+#     )
 
-    found_events = await db.find_events_fuzzy(message.text, search_regions)
-    response_text, event_ids = await format_events_for_response(found_events) 
+#     found_events = await db.find_events_fuzzy(message.text, search_regions)
+#     response_text, event_ids = await format_events_for_response(found_events) 
     
-    if not found_events:
-        await message.answer(lexicon.get('search_no_results_found_v2').format(query_text=hbold(message.text)))
-        await state.clear()
-    else:
-        await state.update_data(last_shown_event_ids=event_ids)
-        await message.answer(
-            response_text, 
-            disable_web_page_preview=True, 
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb.get_afisha_actions_keyboard(lexicon)
-        )
+#     if not found_events:
+#         await message.answer(lexicon.get('search_no_results_found_v2').format(query_text=hbold(message.text)))
+#         await state.clear()
+#     else:
+#         await state.update_data(last_shown_event_ids=event_ids)
+#         await message.answer(
+#             response_text, 
+#             disable_web_page_preview=True, 
+#             parse_mode=ParseMode.HTML,
+#             reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+        # )
 
 # --- ДОБАВЛЕНИЕ В ПОДПИСКИ (остается без изменений) ---
 @router.callback_query(F.data == "add_events_to_subs")
