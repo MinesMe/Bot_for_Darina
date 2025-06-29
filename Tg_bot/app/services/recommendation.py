@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import logging
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
@@ -32,22 +33,21 @@ async def get_recommended_artists(artist_name: str):
     try:
         response = await model.generate_content_async(prompt)
         raw_artists = response.text.strip()
-        # Приводим все имена к нижнему регистру для поиска/создания в БД
         recommended_names_lower = [artist.strip().lower() for artist in raw_artists.split(',') if artist.strip()]
 
         if not recommended_names_lower:
-            print(f"Предупреждение: Gemini не вернул рекомендации для '{artist_name}'.")
+            logging.warning(f"Предупреждение: Gemini не вернул рекомендации для '{artist_name}'.")
             return []
 
-        # --- ПОИСК ИЛИ СОЗДАНИЕ АРТИСТОВ В НАШЕЙ БД ---
-        # Вызываем нашу новую функцию из requests.py
-        verified_artists = await db.get_or_create_artists_by_name(recommended_names_lower)
+        # Вызываем нашу функцию, она возвращает список ОБЪЕКТОВ
+        verified_artists_objects = await db.get_or_create_artists_by_name(recommended_names_lower)
         
-        print(f"Успешно обработаны рекомендации для '{artist_name}'.")
-        return verified_artists
+        logging.info(f"Успешно обработаны рекомендации для '{artist_name}'.")
+        # --- ИСПРАВЛЕНИЕ: Возвращаем список объектов, а не словарей ---
+        return verified_artists_objects
 
     except Exception as e:
-        print(f"Произошла ошибка при запросе к Gemini API или работе с БД: {e}")
+        logging.error(f"Произошла ошибка при запросе к Gemini API или работе с БД: {e}", exc_info=True)
         return []
 
 def get_concert_recommendations(country_name: str, target_date_str: str):

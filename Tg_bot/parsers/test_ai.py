@@ -1,10 +1,14 @@
+import os
+from dotenv import load_dotenv
 import google.generativeai as genai
 
 # ПРЕДУПРЕЖДЕНИЕ: Этот способ небезопасен для публичного кода!
 # Ваш API ключ виден всем, кто имеет доступ к этому файлу.
 # AIzaSyC95EiaCgY0zwW1JTWz4Ip2xfsO8DVmh5Q" # Я закомментировал ключ для безопасности
-API_KEY = "AIzaSyC95EiaCgY0zwW1JTWz4Ip2xfsO8DVmh5Q" 
 
+
+load_dotenv()
+API_KEY = os.getenv('GEMINI_API_KEY')
 
 async def getArtist(description: str) -> list: # Добавил type hint для наглядности
     

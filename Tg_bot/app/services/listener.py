@@ -50,7 +50,7 @@ async def favorite_notification_handler(bot: Bot, storage: BaseStorage, connecti
         
         new_rec_item = {
             "source_artist_name": source_artist_name,
-            "recommended_artists": recommended_artists_dicts,
+            "recommended_artists": recommended_artists_dicts, # <-- Сохраняем словари
             "message_id": None
         }
 
