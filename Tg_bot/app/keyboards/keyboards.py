@@ -134,6 +134,9 @@ def get_recommended_artists_keyboard(
     # ...
     builder = InlineKeyboardBuilder()
 
+    if selected_artist_ids is None:
+        selected_artist_ids = set()
+
     for artist_dict in artists_data: # <-- итерируемся по словарям
         artist_id = artist_dict['artist_id']
         artist_name = artist_dict['name']
@@ -144,13 +147,13 @@ def get_recommended_artists_keyboard(
 
     builder.adjust(1)
     
-    if selected_artist_ids:
-        builder.row(
-            InlineKeyboardButton(
-                text=lexicon.get('finish_button'),
-                callback_data="rec_finish"
-            )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text=lexicon.get('finish_button'),
+            callback_data="rec_finish"
         )
+    )
         
     return builder.as_markup()
 

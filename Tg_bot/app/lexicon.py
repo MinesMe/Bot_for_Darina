@@ -226,7 +226,7 @@ class Lexicon:
 
                 'no_info': "Нет информации",
                 'no_future_events_for_favorites': "На данный момент для них нет предстоящих событий. Мы сообщим, как только что-то появится!",
-
+                'recommendations_after_add_favorite': "Мы заметили, что вы добавили в избранное {artist_name}! ✨\n\nНа основе этого, возможно, вам также понравятся эти исполнители:",
                 
             },
             'be': {
@@ -400,6 +400,7 @@ class Lexicon:
 
                 'no_info': "No information",
                 'no_future_events_for_favorites': "Currently, there are no upcoming events for them. We'll notify you as soon as something is announced!",
+                'recommendations_after_add_favorite': "We noticed you've added {artist_name} to your favorites! ✨\n\nBased on this, you might also like these artists:",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

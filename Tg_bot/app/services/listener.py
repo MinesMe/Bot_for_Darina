@@ -20,71 +20,6 @@ from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.base import StorageKey
 
 
-async def favorite_notification_handler(bot: Bot, storage: BaseStorage, connection, pid, channel, payload):
-    """
-    Обрабатывает уведомление, получает список рекомендованных артистов,
-    и отправляет его пользователю в виде интерактивной клавиатуры.
-    """
-    print(f"\n⭐️ Получено уведомление о НОВОМ ИЗБРАННОМ из канала '{channel}' (PID: {pid})")
-    
-    try:
-        data = json.loads(payload)
-        user_id = data.get('user_id')
-        artist_name = data.get('artist_name')
-
-        if not user_id or not artist_name:
-            print("[ОШИБКА] В payload отсутствуют user_id или artist_name.")
-            return
-
-        # 1. Вызываем функцию get_recommended_artists. Она возвращает СПИСОК СЛОВАРЕЙ.
-        #    Назовем переменную artists_from_db_as_dicts, чтобы было понятно.
-        artists_from_db_as_dicts = await get_recommended_artists(artist_name)
-
-        if not artists_from_db_as_dicts:
-            print(f"--> Рекомендации для '{artist_name}' не найдены. Уведомление не отправлено.")
-            return
-
-        user_lang = await get_user_lang(user_id)
-        lexicon = Lexicon(user_lang)
-        
-        text_header = lexicon.get('recommendations_after_add_favorite').format(artist_name=hbold(artist_name.title()))
-        
-        # 3. Создаем клавиатуру, передавая ей наш список словарей
-        keyboard = kb.get_recommended_artists_keyboard(artists_from_db_as_dicts, lexicon, set())
-
-        # 4. ОТПРАВЛЯЕМ СООБЩЕНИЕ с клавиатурой
-        try:
-            sent_message = await bot.send_message(
-                chat_id=user_id,
-                text=text_header,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML,
-            )
-            print(f"--> Отправлено уведомление с рекомендациями пользователю {user_id}")
-
-            # 5. ЗАПИСЫВАЕМ ДАННЫЕ В FSM для этого пользователя
-            state_key = StorageKey(bot_id=bot.id, chat_id=user_id, user_id=user_id) 
-            
-            await storage.set_state(key=state_key, state=RecommendationFlow.selecting_artists)
-            await storage.set_data(
-                key=state_key, 
-                data={
-                    # В 'recommended_artists' мы сохраняем наш список словарей
-                    'recommended_artists': artists_from_db_as_dicts, 
-                    'selected_artist_ids': [], 
-                    'message_id_to_edit': sent_message.message_id
-                }
-            )
-            print(f"--> Установлено состояние 'selecting_artists' для пользователя {user_id}")
-
-        except TelegramForbiddenError:
-            print(f"Пользователь {user_id} заблокировал бота.")
-        except Exception as e:
-            logging.error(f"Не удалось отправить рекомендации пользователю {user_id}: {e}", exc_info=True)
-
-    except Exception as e:
-        logging.error(f"[КРИТИЧЕСКАЯ ОШИБКА] в favorite_notification_handler: {e}", exc_info=True)
-
 async def notification_handler(bot: Bot, connection, pid, channel, payload):
     """Обрабатывает уведомление о новом событии из БД."""
     print(f"\n--- Получено новое событие от PID {pid} по каналу {channel} ---")
@@ -165,12 +100,7 @@ async def listen_for_db_notifications(bot: Bot, storage: RedisStorage):
             await asyncpg_conn.add_listener("new_event_channel", event_handler_with_bot)
             print("✅ Подписка на канал 'new_event_channel' выполнена.")
             
-            # 2. Создаем обработчик для КАНАЛА ИЗБРАННОГО (указывает на favorite_notification_handler)
-            favorite_handler_with_bot = lambda c, p, ch, pl: asyncio.create_task(favorite_notification_handler(bot, storage, c, p, ch, pl))
-            await asyncpg_conn.add_listener("user_favorite_added_channel", favorite_handler_with_bot)
-            print("✅ Подписка на канал 'user_favorite_added_channel' выполнена.")
-            
-            print("\nСлушатель готов к работе. Ожидание уведомлений...")
+           
             while True:
                 await asyncio.sleep(3600)
 

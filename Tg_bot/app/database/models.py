@@ -217,49 +217,6 @@ FOR EACH ROW
 EXECUTE FUNCTION notify_new_event();
 """
 
-
-
-
-
-# --- НОВЫЙ КОД: Триггер для добавления в "Избранное" ---
-SQL_CREATE_FAVORITE_NOTIFY_FUNCTION = """
-CREATE OR REPLACE FUNCTION notify_new_user_favorite()
-RETURNS TRIGGER AS $$
-DECLARE
-    payload JSONB;
-    artist_name_var TEXT;
-BEGIN
-    -- Получаем имя артиста по его ID из вставленной строки (NEW.artist_id)
-    SELECT name INTO artist_name_var
-    FROM artists
-    WHERE artist_id = NEW.artist_id;
-
-    -- Собираем JSON-объект с необходимой информацией
-    payload := jsonb_build_object(
-        'user_id', NEW.user_id,
-        'artist_id', NEW.artist_id,
-        'artist_name', artist_name_var
-    );
-
-    -- Отправляем уведомление в наш новый, выделенный канал
-    PERFORM pg_notify('user_favorite_added_channel', payload::text);
-
-    -- Возвращаем NEW, что является стандартной практикой для AFTER-триггеров
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-"""
-
-SQL_CREATE_FAVORITE_TRIGGER = """
-CREATE TRIGGER user_favorite_insert_trigger
-AFTER INSERT ON user_favorites
-FOR EACH ROW
-EXECUTE FUNCTION notify_new_user_favorite();
-"""
-# --- КОНЕЦ НОВОГО КОДА ---
-
-
-
 listener_engine = create_async_engine(url=SQL_ALCHEMY, poolclass=NullPool)
 
 
@@ -288,13 +245,6 @@ async def async_main():
             await conn.execute(text(SQL_CREATE_TRIGGER))
             print("-> Триггер для 'events' успешно обновлен.")
 
-            # --- Триггер для избранного ---
-            print("      -> Обновление триггера для 'user_favorites'...")
-            await conn.execute(text("DROP TRIGGER IF EXISTS user_favorite_insert_trigger ON user_favorites;"))
-            await conn.execute(text("DROP FUNCTION IF EXISTS notify_new_user_favorite();"))
-            await conn.execute(text(SQL_CREATE_FAVORITE_NOTIFY_FUNCTION))
-            await conn.execute(text(SQL_CREATE_FAVORITE_TRIGGER))
-            print("      -> Триггер для 'user_favorites' успешно обновлен.")
         
         # COMMIT будет вызван здесь автоматически при выходе из блока "with"
         print("✅ Транзакция успешно завершена. Все объекты в БД обновлены.")

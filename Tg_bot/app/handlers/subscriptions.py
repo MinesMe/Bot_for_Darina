@@ -1,6 +1,8 @@
 # app/handlers/subscriptions.py
 
-from aiogram import Router, F
+import asyncio
+import logging
+from aiogram import Bot, Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
@@ -17,6 +19,9 @@ from aiogram.enums import ParseMode
 from app.utils.utils import format_events_by_artist # Наш новый форматер
 from app.handlers.afisha import AddToSubsFSM, send_long_message
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.storage.base import BaseStorage, StorageKey
+# ... (остальные ваши импорты)
+from app.services.recommendation import get_recommended_artists
 
 
 
@@ -36,6 +41,107 @@ class SubscriptionFlow(StatesGroup):
 class RecommendationFlow(StatesGroup):
     selecting_artists = State()
 
+
+async def trigger_recommendation_flow(
+    user_id: int,
+    bot: Bot,
+    storage: BaseStorage,
+    added_artist_names: list[str]
+):
+    """
+    Запускает флоу рекомендаций: запрашивает, отправляет и устанавливает FSM.
+    """
+    if not added_artist_names:
+        return
+
+    # 1. Получаем рекомендации. Эта функция уже возвращает list[dict].
+    recommended_artists_dicts = await get_recommended_artists(added_artist_names)
+    if not recommended_artists_dicts:
+        logging.info(f"Для пользователя {user_id} не найдено рекомендаций на основе {added_artist_names}.")
+        return
+
+    # --- ИСПРАВЛЕНИЕ: Убираем лишнее преобразование ---
+    # Строка `recommended_artists_dicts = [artist.to_dict() for artist in recommended_artists]` УДАЛЕНА.
+    # Мы используем `recommended_artists_dicts` напрямую.
+
+    # 2. Готовим сообщение и клавиатуру
+    user_lang = await db.get_user_lang(user_id)
+    lexicon = Lexicon(user_lang)
+    
+    source_artist_str = ", ".join(f"'{name.title()}'" for name in added_artist_names)
+    text_header = lexicon.get('recommendations_after_add_favorite').format(artist_name=source_artist_str)
+    
+    # В клавиатуру передаем наш list[dict]
+    keyboard = kb.get_recommended_artists_keyboard(
+        recommended_artists_dicts, 
+        lexicon,
+        set() # <-- Явно указываем, что при первом показе ничего не выбрано
+    )
+
+    # 3. Отправляем сообщение и устанавливаем FSM
+    try:
+        sent_message = await bot.send_message(
+            chat_id=user_id,
+            text=text_header,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
+        
+        state_key = StorageKey(bot_id=bot.id, chat_id=user_id, user_id=user_id)
+        await storage.set_state(key=state_key, state=RecommendationFlow.selecting_artists)
+        await storage.set_data(
+            key=state_key, 
+            data={
+                "recommended_artists": recommended_artists_dicts, # Сохраняем list[dict]
+                "current_selection_ids": [],
+                "message_id_to_edit": sent_message.message_id
+            }
+        )
+        logging.info(f"--> Отправлена рекомендация и установлено состояние для {user_id}")
+
+    except Exception as e:
+        logging.error(f"Не удалось запустить флоу рекомендаций для пользователя {user_id}: {e}", exc_info=True)
+
+
+async def show_events_for_new_favorites(
+    callback: CallbackQuery,
+    state: FSMContext,
+    artist_ids: list[int],
+    artist_names: list[str]
+):
+    """
+    Ищет события для артистов и отправляет их пользователю.
+    Выполняется как фоновая задача.
+    """
+    lexicon = Lexicon(callback.from_user.language_code)
+    found_events = await db.get_future_events_for_artists(artist_ids)
+    
+    if not found_events:
+        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
+        await callback.message.answer(no_events_text)
+        return
+
+    response_text, event_ids_to_subscribe = await format_events_by_artist(
+        found_events, artist_names, lexicon
+    )
+    
+    if not response_text:
+        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
+        await callback.message.answer(no_events_text)
+        return
+
+    # Устанавливаем состояние для добавления в подписки
+    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+    await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
+    
+    await send_long_message(
+        message=callback.message,
+        text=response_text,
+        lexicon=lexicon,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+    )
 
 @router.message(F.text.in_(['➕ Найти/добавить артиста', '➕ Find/Add Artist', '➕ Знайсці/дадаць выканаўцу'])) 
 async def menu_add_subscriptions(message: Message, state: FSMContext):
@@ -218,83 +324,50 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
         await callback.answer(lexicon.get('nothing_to_add_alert'), show_alert=True)
         return
 
-    added_artist_ids = []
     added_artist_names = []
+    added_artist_ids = []
     
-    # 1. Сохраняем артистов в базу данных
     async with db.async_session() as session:
         for item_data in pending_items:
             artist_name = item_data['item_name']
-            regions_to_save = item_data['regions']
-            
-            # Находим ID артиста по его имени
             artist_obj_stmt = select(db.Artist).where(db.Artist.name == artist_name)
             artist = (await session.execute(artist_obj_stmt)).scalar_one_or_none()
-            
             if artist:
-                await db.add_artist_to_favorites(session, callback.from_user.id, artist.artist_id, regions_to_save)
+                await db.add_artist_to_favorites(session, callback.from_user.id, artist.artist_id, item_data['regions'])
                 added_artist_ids.append(artist.artist_id)
                 added_artist_names.append(artist.name)
-        
         await session.commit()
-
+    
+    await state.clear()
+    
     if not added_artist_ids:
         await callback.message.edit_text(lexicon.get('failed_to_add_artists'))
         await callback.answer()
-        await state.clear()
         return
 
-    # 2. Ищем будущие события для только что добавленных артистов
-    found_events = await db.get_future_events_for_artists(added_artist_ids)
-    
-    # Редактируем исходное сообщение, чтобы пользователь видел, что процесс идет
-    # (например, "Добавлено N артистов. Ищем события...")
+    # Сначала показываем пользователю результат по ивентам
     initial_feedback_text = lexicon.get('favorites_added_final').format(count=len(added_artist_names))
-    await callback.message.edit_text(initial_feedback_text, parse_mode="HTML")
-
-    # 3. Проверяем, нашлись ли события
-    if not found_events:
-        # Событий нет. Сообщаем об этом и завершаем.
-        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
-        await callback.message.answer(no_events_text) # Отправляем доп. сообщение
-        await callback.answer()
-        await state.clear()
-        return
-
-    # 4. События найдены. Форматируем их и отправляем.
-    # Вызываем наш новый форматер из utils.py
-    response_text, event_ids_to_subscribe = await format_events_by_artist(
-        found_events,
-        added_artist_names, # <-- ПЕРЕДАЕМ СПИСОК ДОБАВЛЕННЫХ АРТИСТОВ
-        lexicon
+    await callback.message.edit_text(initial_feedback_text)
+    
+    # --- ЗАПУСК РЕКОМЕНДАЦИЙ И ПОИСКА СОБЫТИЙ В ФОНЕ ---
+    # Мы не ждем завершения этих задач, чтобы интерфейс бота не "зависал"
+    
+    # 1. Запускаем поиск событий для добавленных артистов
+    asyncio.create_task(
+        show_events_for_new_favorites(callback, state, added_artist_ids, added_artist_names)
     )
     
-    if not response_text:
-        # На случай, если форматер ничего не вернул (например, все события оказались дублями)
-        # Повторяем логику "событий не найдено"
-        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
-        await callback.message.answer(no_events_text)
-        await callback.answer()
-        await state.clear()
-        return
-
-    # 5. Сохраняем ID найденных событий в FSM для следующего шага
-    # и переводим пользователя в состояние ожидания ввода номеров.
-    # Мы переиспользуем FSM из `afisha.py`!
-    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
-    await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
-    
-    # 6. Отправляем большое сообщение с событиями и кнопкой "Добавить в подписки"
-    # Используем send_long_message из афиши, чтобы обойти лимиты Telegram
-    await send_long_message(
-        message=callback.message,
-        text=response_text,
-        lexicon=lexicon,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-        # Клавиатура из афиши, которая ведет на `add_events_to_subs`
-        reply_markup=kb.get_afisha_actions_keyboard(lexicon) 
+    # 2. Запускаем флоу рекомендаций
+    # Передаем bot и storage из контекста aiogram (data['bot'], data['state'].storage)
+    asyncio.create_task(
+        trigger_recommendation_flow(
+            user_id=callback.from_user.id,
+            bot=callback.bot,
+            storage=state.storage,
+            added_artist_names=added_artist_names
+        )
     )
+    
     await callback.answer()
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "write_artist")
@@ -481,24 +554,29 @@ async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContex
         return
 
     data = await state.get_data()
-    # Получаем список СЛОВАРЕЙ из state
-    all_artists_data = data.get('recommended_artists', []) 
-    selected_ids = set(data.get('selected_artist_ids', []))
+    
+    # Получаем данные напрямую, без какой-либо очереди
+    all_artists_data = data.get('recommended_artists', [])
+    if not all_artists_data:
+        await callback.answer("Session data is missing. Please try again.", show_alert=True)
+        await state.clear()
+        return
 
-    # "Переключаем" ID в множестве
+    # Используем set для быстрой проверки и добавления/удаления
+    selected_ids = set(data.get('current_selection_ids', []))
+
     if artist_id in selected_ids:
         selected_ids.remove(artist_id)
     else:
         selected_ids.add(artist_id)
     
-    # Обновляем данные в state
-    await state.update_data(selected_artist_ids=list(selected_ids))
+    # Сохраняем обратно в state как список, чтобы избежать ошибок JSON
+    await state.update_data(current_selection_ids=list(selected_ids))
 
     lexicon = Lexicon(callback.from_user.language_code)
     
     try:
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Передаем в клавиатуру СПИСОК СЛОВАРЕЙ, который мы получили из state
+        # Перерисовываем клавиатуру
         await callback.message.edit_reply_markup(
             reply_markup=kb.get_recommended_artists_keyboard(
                 all_artists_data, 
@@ -507,10 +585,8 @@ async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContex
             )
         )
     except TelegramBadRequest as e:
-        if "message is not modified" in str(e):
-            pass
-        else:
-            raise
+        if "message is not modified" in str(e): pass
+        else: raise
     
     await callback.answer()
 
@@ -522,80 +598,53 @@ async def cq_finish_recommendation_selection(callback: CallbackQuery, state: FSM
     и запускает поиск их событий.
     """
     data = await state.get_data()
-    selected_ids = data.get('selected_artist_ids', [])
-    # --- ИЗМЕНЕНИЕ 1: Получаем полные данные о рекомендованных артистах ---
-    all_artists_data = data.get('recommended_artists', [])
+    selected_ids = data.get('current_selection_ids', [])
     message_id_to_edit = data.get('message_id_to_edit')
+    all_artists_data = data.get('recommended_artists', [])
     
     lexicon = Lexicon(callback.from_user.language_code)
+    
+    # Сразу очищаем state, так как сессия выбора рекомендаций завершена
+    await state.clear()
+    await callback.answer()
 
+    # Сначала редактируем сообщение с рекомендациями
     if not selected_ids:
-        await callback.answer(lexicon.get('nothing_to_add_alert'), show_alert=True)
-        return
+        # Если ничего не выбрано, просто пишем "Хорошо!"
+        final_text = lexicon.get('ok_button')
+    else:
+        # Если выбраны, пишем "Добавлено N артистов"
+        final_text = lexicon.get('favorites_added_final').format(count=len(selected_ids))
 
-    # Получаем общую мобильность пользователя
-    general_mobility = await db.get_general_mobility(callback.from_user.id) or []
-
-    # Добавляем выбранных артистов в "Избранное"
-    async with db.async_session() as session:
-        for artist_id in selected_ids:
-            await db.add_artist_to_favorites(session, callback.from_user.id, artist_id, general_mobility)
-        await session.commit()
-
-    # Редактируем исходное сообщение с рекомендациями
-    final_text = lexicon.get('favorites_added_final').format(count=len(selected_ids))
     try:
         if message_id_to_edit:
             await callback.bot.edit_message_text(
                 chat_id=callback.from_user.id,
                 message_id=message_id_to_edit,
                 text=final_text,
-                reply_markup=None
+                reply_markup=None # Убираем клавиатуру
             )
-    except TelegramBadRequest:
-        pass
+    except TelegramBadRequest: pass
 
-    # Ищем события для выбранных артистов
-    found_events = await db.get_future_events_for_artists(selected_ids)
-
-    if not found_events:
-        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
-        await callback.message.answer(no_events_text)
-        await state.clear()
-        await callback.answer()
+    # Если ничего не было выбрано, просто выходим
+    if not selected_ids:
         return
 
-    # --- ИЗМЕНЕНИЕ 2: Собираем список имен для передачи в форматер ---
+    # --- Если артисты были выбраны, продолжаем ---
+
+    # 1. Сохраняем их в "Избранное"
+    general_mobility = await db.get_general_mobility(callback.from_user.id) or []
+    async with db.async_session() as session:
+        for artist_id in selected_ids:
+            await db.add_artist_to_favorites(session, callback.from_user.id, artist_id, general_mobility)
+        await session.commit()
+    
+    # 2. Запускаем фоновую задачу для поиска их событий
     selected_artist_names = [
         artist['name'] for artist in all_artists_data 
         if artist['artist_id'] in selected_ids
     ]
 
-    # --- ИЗМЕНЕНИЕ 3: Передаем список имен в форматер ---
-    response_text, event_ids_to_subscribe = await format_events_by_artist(
-        found_events, 
-        selected_artist_names, # <-- Вот он, наш новый аргумент
-        lexicon
+    asyncio.create_task(
+        show_events_for_new_favorites(callback, state, selected_ids, selected_artist_names)
     )
-
-    if not response_text:
-        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
-        await callback.message.answer(no_events_text)
-        await state.clear()
-        await callback.answer()
-        return
-
-    # Устанавливаем состояние для добавления в подписки
-    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
-    await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
-    
-    # Отправляем сообщение с событиями
-    await send_long_message(
-        message=callback.message,
-        text=response_text,
-        lexicon=lexicon,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-        reply_markup=kb.get_afisha_actions_keyboard(lexicon)
-    )
-    await callback.answer()
