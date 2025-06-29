@@ -7,7 +7,7 @@ from app.database.requests import requests as db # Импортируем наш
 from .query import get_concert_recommendations_query, get_local_event_recommendations_query
 from app.database.models import async_session # Импортируем async_session из models.py
 
-load_dotenv()
+
 
 async def get_recommended_artists(artist_name: str):
     """
@@ -17,12 +17,14 @@ async def get_recommended_artists(artist_name: str):
     Возвращает:
         list[Artist]: Список объектов Artist (существующих и/или только что созданных).
     """
+    load_dotenv()
     gemini_api_key = os.getenv('GEMINI_API_KEY')
+    print(gemini_api_key)
     if not gemini_api_key:
         raise ValueError("GEMINI_API_KEY не установлен.")
     genai.configure(api_key=gemini_api_key)
 
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 
     prompt = (
         f"Назови 3 артиста, похожих на {artist_name}. "

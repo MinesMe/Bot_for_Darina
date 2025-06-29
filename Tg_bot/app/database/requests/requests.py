@@ -457,10 +457,17 @@ async def get_grouped_events_by_city_and_category(
         )
 
         # Формируем условия фильтрации (WHERE)
+        today = datetime.now()
+
+        # Формируем условия фильтрации (WHERE)
         conditions = [
             City.name == city_name,
-            EventType.name == category
+            EventType.name == category,
+            # НОВОЕ УСЛОВИЕ: дата начала должна быть больше или равна СЕГОДНЯШНЕМУ ДНЮ
+            # или не указана вовсе (для анонсов).
+            or_(Event.date_start >= today, Event.date_start.is_(None))
         ]
+        
         if date_from:
             # Условие "больше или равно" для даты начала
             conditions.append(Event.date_start >= date_from)

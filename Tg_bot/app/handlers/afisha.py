@@ -67,10 +67,21 @@ async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwa
 
 async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    date_from, date_to = data.get("date_from"), data.get("date_to")
+    date_from_str = data.get("date_from")
+    date_to_str = data.get("date_to")
     
+    date_from = datetime.fromisoformat(date_from_str) if date_from_str else None
+    date_to = datetime.fromisoformat(date_to_str) if date_to_str else None
+    
+    if not date_from or not date_to:
+        # Добавим небольшую проверку на всякий случай
+        await callback.answer("Date selection error. Please try again.", show_alert=True)
+        return
+
     await state.set_state(AfishaFlowFSM.choosing_filter_type)
     lexicon = Lexicon(callback.from_user.language_code)
+    
+    # Теперь этот код будет работать, так как date_from - это снова объект datetime
     await callback.message.edit_text(
         lexicon.get('afisha_choose_filter_type_prompt').format(
             date_from=date_from.strftime('%d.%m.%Y'),
@@ -133,7 +144,10 @@ async def process_period_choice(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    await state.update_data(date_from=date_from, date_to=date_to)
+    await state.update_data(
+        date_from=date_from.isoformat() if date_from else None,
+        date_to=date_to.isoformat() if date_to else None
+    )
     await show_filter_type_choice(callback, state)
 
 @router.callback_query(AfishaFlowFSM.choosing_month, F.data.startswith("select_month:"))
@@ -145,7 +159,10 @@ async def process_month_choice(callback: CallbackQuery, state: FSMContext):
     last_day_num = monthrange(year, month)[1]
     date_to = datetime(year, month, last_day_num)
     
-    await state.update_data(date_from=date_from, date_to=date_to)
+    await state.update_data(
+        date_from=date_from.isoformat() if date_from else None,
+        date_to=date_to.isoformat() if date_to else None
+    )
     await show_filter_type_choice(callback, state)
 
 
@@ -160,11 +177,16 @@ async def afisha_by_my_prefs(callback: CallbackQuery, state: FSMContext):
         return
 
     data = await state.get_data()
-    date_from, date_to = data.get("date_from"), data.get("date_to")
+    date_from_str = data.get("date_from")
+    date_to_str = data.get("date_to")
+    date_from = datetime.fromisoformat(date_from_str) if date_from_str else None
+    date_to = datetime.fromisoformat(date_to_str) if date_to_str else None
+
     city_name, event_types = user_prefs["home_city"], user_prefs["preferred_event_types"]
 
     events_by_category = {}
     for etype in event_types:
+        # Передаем в функцию БД уже готовые объекты datetime
         events = await db.get_grouped_events_by_city_and_category(city_name, etype, date_from, date_to)
         if events: events_by_category[etype] = events
             
@@ -242,7 +264,10 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
     
     city_name = data.get("temp_city")
     event_types = data.get("temp_event_types", [])
-    date_from, date_to = data.get("date_from"), data.get("date_to")
+    date_from_str = data.get("date_from")
+    date_to_str = data.get("date_to")
+    date_from = datetime.fromisoformat(date_from_str) if date_from_str else None
+    date_to = datetime.fromisoformat(date_to_str) if date_to_str else None
 
     if not event_types:
         await callback.answer(lexicon.get('select_at_least_one_event_type_alert'), show_alert=True)
@@ -250,6 +275,7 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
         
     events_by_category = {}
     for etype in event_types:
+        # Передаем в функцию БД уже готовые объекты datetime
         events = await db.get_grouped_events_by_city_and_category(city_name, etype, date_from, date_to)
         if events: events_by_category[etype] = events
             
@@ -259,11 +285,8 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
     except TelegramBadRequest as e:
-        # Проверяем, что это именно та ошибка, которую мы хотим проигнорировать
-        if "message is not modified" in str(e):
-            pass  # Просто пропускаем, если сообщение не изменилось
-        else:
-            raise  # Если это другая ошибка "Bad Request", то ее нужно увидеть
+        if "message is not modified" in str(e): pass
+        else: raise 
 
     if not event_ids:
         await callback.message.answer(lexicon.get('afisha_nothing_found_for_query'))
