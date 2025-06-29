@@ -125,38 +125,25 @@ def get_region_selection_keyboard(
     return builder.as_markup()
 
 
+
 def get_recommended_artists_keyboard(
-    artists: list, # Ожидаем список объектов Artist
+    artists_data: list[dict], # <-- Ожидает список словарей
     lexicon,
     selected_artist_ids: set = None
 ) -> InlineKeyboardMarkup:
-    """
-    Создает клавиатуру для выбора рекомендованных артистов.
-
-    Args:
-        artists: Список объектов Artist для отображения.
-        lexicon: Экземпляр Lexicon.
-        selected_artist_ids: Множество (set) ID артистов, которые уже выбраны.
-    """
-    if selected_artist_ids is None:
-        selected_artist_ids = set()
-        
+    # ...
     builder = InlineKeyboardBuilder()
 
-    for artist in artists:
-        # Используем .title() для красивого отображения имени с заглавной буквы
-        display_name = artist.name.title()
+    for artist_dict in artists_data: # <-- итерируемся по словарям
+        artist_id = artist_dict['artist_id']
+        artist_name = artist_dict['name']
+        display_name = artist_name.title()
         
-        # Проверяем, выбран ли артист, и добавляем соответствующий эмодзи
-        text = f"✅ {display_name}" if artist.artist_id in selected_artist_ids else f"⬜️ {display_name}"
-        
-        # В callback_data зашиваем ID артиста для надежности
-        builder.button(text=text, callback_data=f"rec_toggle:{artist.artist_id}")
+        text = f"✅ {display_name}" if artist_id in selected_artist_ids else f"⬜️ {display_name}"
+        builder.button(text=text, callback_data=f"rec_toggle:{artist_id}")
 
-    # Кнопки располагаются по одной в ряду для лучшей читаемости
     builder.adjust(1)
     
-    # Добавляем кнопку "Готово", только если выбран хотя бы один артист
     if selected_artist_ids:
         builder.row(
             InlineKeyboardButton(
@@ -166,8 +153,4 @@ def get_recommended_artists_keyboard(
         )
         
     return builder.as_markup()
-
-
-
-
 

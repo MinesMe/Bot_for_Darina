@@ -15,10 +15,14 @@ from app.services.recommendation import get_recommended_artists
 from app.handlers.subscriptions import RecommendationFlow # Импортируем наш новый FSM
 from aiogram.fsm.storage.redis import RedisStorage # Или ваш FSM Storage
 from app.keyboards import keyboards as kb
+import logging # Добавьте импорт в начало файла
+from aiogram.fsm.storage.base import BaseStorage
+from aiogram.fsm.storage.base import StorageKey
 
-async def favorite_notification_handler(bot: Bot, storage: RedisStorage, connection, pid, channel, payload):
+
+async def favorite_notification_handler(bot: Bot, storage: BaseStorage, connection, pid, channel, payload):
     """
-    Обрабатывает уведомление, получает ВАШ список рекомендованных артистов
+    Обрабатывает уведомление, получает список рекомендованных артистов,
     и отправляет его пользователю в виде интерактивной клавиатуры.
     """
     print(f"\n⭐️ Получено уведомление о НОВОМ ИЗБРАННОМ из канала '{channel}' (PID: {pid})")
@@ -32,23 +36,21 @@ async def favorite_notification_handler(bot: Bot, storage: RedisStorage, connect
             print("[ОШИБКА] В payload отсутствуют user_id или artist_name.")
             return
 
-        # 1. Получаем список ОБЪЕКТОВ Artist, которые есть в нашей БД (или только что созданы)
-        recommended_artists = await get_recommended_artists(artist_name)
+        # 1. Вызываем функцию get_recommended_artists. Она возвращает СПИСОК СЛОВАРЕЙ.
+        #    Назовем переменную artists_from_db_as_dicts, чтобы было понятно.
+        artists_from_db_as_dicts = await get_recommended_artists(artist_name)
 
-        # Если Gemini ничего не вернул или ни один из артистов не прошел валидацию/создание
-        if not recommended_artists:
-            print(f"--> Рекомендации для '{artist_name}' не найдены или не прошли валидацию. Уведомление не отправлено.")
+        if not artists_from_db_as_dicts:
+            print(f"--> Рекомендации для '{artist_name}' не найдены. Уведомление не отправлено.")
             return
 
         user_lang = await get_user_lang(user_id)
         lexicon = Lexicon(user_lang)
         
-        # 2. Формируем текст сообщения
         text_header = lexicon.get('recommendations_after_add_favorite').format(artist_name=hbold(artist_name.title()))
         
-        # 3. Создаем нашу новую интерактивную клавиатуру
-        # Изначально ничего не выбрано, поэтому selected_artist_ids - пустой set
-        keyboard = kb.get_recommended_artists_keyboard(recommended_artists, lexicon, set())
+        # 3. Создаем клавиатуру, передавая ей наш список словарей
+        keyboard = kb.get_recommended_artists_keyboard(artists_from_db_as_dicts, lexicon, set())
 
         # 4. ОТПРАВЛЯЕМ СООБЩЕНИЕ с клавиатурой
         try:
@@ -61,25 +63,27 @@ async def favorite_notification_handler(bot: Bot, storage: RedisStorage, connect
             print(f"--> Отправлено уведомление с рекомендациями пользователю {user_id}")
 
             # 5. ЗАПИСЫВАЕМ ДАННЫЕ В FSM для этого пользователя
-            # Это ключевой шаг для связи уведомителя с хэндлерами
-            state_data = {
-                'recommended_artists': [artist.to_dict() for artist in recommended_artists], # Сериализуем объекты для хранения
-                'selected_artist_ids': set(), # Изначально выбор пуст
-                'message_id_to_edit': sent_message.message_id # Сохраняем ID сообщения для редактирования
-            }
-            # Устанавливаем состояние и сохраняем данные
-            await storage.set_state(key=f"fsm:{user_id}:{user_id}", state=RecommendationFlow.selecting_artists)
-            await storage.set_data(key=f"fsm:{user_id}:{user_id}", data=state_data)
+            state_key = StorageKey(bot_id=bot.id, chat_id=user_id, user_id=user_id) 
+            
+            await storage.set_state(key=state_key, state=RecommendationFlow.selecting_artists)
+            await storage.set_data(
+                key=state_key, 
+                data={
+                    # В 'recommended_artists' мы сохраняем наш список словарей
+                    'recommended_artists': artists_from_db_as_dicts, 
+                    'selected_artist_ids': [], 
+                    'message_id_to_edit': sent_message.message_id
+                }
+            )
             print(f"--> Установлено состояние 'selecting_artists' для пользователя {user_id}")
-
 
         except TelegramForbiddenError:
             print(f"Пользователь {user_id} заблокировал бота.")
         except Exception as e:
-            print(f"Не удалось отправить рекомендации пользователю {user_id}: {e}")
+            logging.error(f"Не удалось отправить рекомендации пользователю {user_id}: {e}", exc_info=True)
 
     except Exception as e:
-        print(f"[КРИТИЧЕСКАЯ ОШИБКА] в favorite_notification_handler: {e}", exc_info=True)
+        logging.error(f"[КРИТИЧЕСКАЯ ОШИБКА] в favorite_notification_handler: {e}", exc_info=True)
 
 async def notification_handler(bot: Bot, connection, pid, channel, payload):
     """Обрабатывает уведомление о новом событии из БД."""

@@ -98,29 +98,25 @@ async def format_events_for_response(events: list) -> str:
     return separator.join(response_parts)
 
 async def format_events_by_artist(
-    events: list, # Принимает список объектов Event
+    events: list,
+    target_artist_names: list[str], # <-- НОВЫЙ АРГУМЕНТ
     lexicon: Lexicon
 ) -> tuple[str | None, list[int] | None]:
-    """
-    Форматирует список событий, группируя их по артистам.
-
-    Args:
-        events: Список объектов Event, полученных из БД.
-        lexicon: Экземпляр Lexicon для локализации.
-
-    Returns:
-        Кортеж (отформатированный текст, упорядоченный список event_id).
-        Если событий нет, возвращает (None, None).
-    """
+    # ...
     if not events:
         return None, None
 
-    # 1. Группируем события по имени артиста
+    # 1. Группируем события по имени артиста, но только по тем, кого мы искали
     events_by_artist = defaultdict(list)
+    
+    # Создаем set для быстрой проверки
+    target_artist_set = set(name.lower() for name in target_artist_names)
     for event in events:
-        # У одного события может быть несколько артистов, проходимся по всем
         for event_artist in event.artists:
-            events_by_artist[event_artist.artist.name].append(event)
+            # Проверяем, является ли артист события одним из тех, кого мы искали
+            if event_artist.artist.name.lower() in target_artist_set:
+                # Группируем по имени в правильном регистре из БД
+                events_by_artist[event_artist.artist.name].append(event)
     
     # Сортируем артистов по алфавиту для предсказуемого вывода
     sorted_artist_names = sorted(events_by_artist.keys())
