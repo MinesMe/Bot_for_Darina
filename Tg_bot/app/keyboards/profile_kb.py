@@ -4,6 +4,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardBut
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from dateutil.relativedelta import relativedelta
 from app.lexicon import EVENT_TYPE_EMOJI
+from ..lexicon import get_event_type_keys, get_event_type_display_name, get_event_type_storage_value
 
 def get_profile_keyboard(lexicon) -> InlineKeyboardMarkup:
     """
@@ -65,14 +66,43 @@ def get_edit_city_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_edit_event_type_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
-    """Новая клавиатура для выбора типов событий в профиле."""
-    if selected_types is None: selected_types = []
+    """
+    Клавиатура для выбора типов событий в профиле с кнопкой "Выбрать все".
+    """
+    all_event_keys = get_event_type_keys()
+    all_storage_values = [get_event_type_storage_value(key) for key in all_event_keys]
+    if selected_types:
+        # Оставляем в selected_types только те значения, которые есть в all_storage_values
+        valid_selected_types = [t for t in selected_types if t in all_storage_values]
+    else:
+        valid_selected_types = []
     builder = InlineKeyboardBuilder()
-    for event_type in lexicon.EVENT_TYPES:
-        text = f"✅ {event_type}" if event_type in selected_types else f"⬜️ {event_type}"
-        builder.button(text=text, callback_data=f"edit_toggle_event_type:{event_type}")
-    builder.adjust(2)
+
+    
+    all_storage_values = [get_event_type_storage_value(key) for key in all_event_keys]
+
+    # --- ДОБАВЛЕНА КНОПКА "ВЫБРАТЬ/СНЯТЬ ВСЕ" ---
+    all_selected = set(all_storage_values) == set(valid_selected_types)
+    select_all_text = lexicon.get('unselect_all_button') if all_selected else lexicon.get('select_all_button')
+    
+    # Используем уникальный callback_data для флоу редактирования
+    builder.button(text=select_all_text, callback_data="edit_toggle_event_type:all")
+    # --- КОНЕЦ ---
+
+    for key in all_event_keys:
+        display_name = get_event_type_display_name(key, lexicon.lang_code)
+        storage_value = get_event_type_storage_value(key)
+        
+        text = f"✅ {display_name}" if storage_value in selected_types else f"⬜️ {display_name}"
+        # Уникальный callback_data для обычных кнопок
+        builder.button(text=text, callback_data=f"edit_toggle_event_type:{storage_value}")
+    
+    # Адаптируем расположение
+    builder.adjust(1, 2)
+    
     builder.row(InlineKeyboardButton(text=lexicon.get('save_changes'), callback_data="finish_edit_preferences"))
+    # Можно добавить кнопку "Назад к выбору города" для лучшего UX
+    # builder.row(InlineKeyboardButton(text=lexicon.get('back_to_choose_city'), callback_data="..."))
     return builder.as_markup()
 
 def get_edit_found_cities_keyboard(found_cities: list, lexicon) -> InlineKeyboardMarkup:

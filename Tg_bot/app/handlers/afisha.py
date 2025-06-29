@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from ..database.requests import requests as db
 from app import keyboards as kb
-from ..lexicon import Lexicon
+from ..lexicon import Lexicon,get_event_type_keys, get_event_type_storage_value
 from app.utils.utils import format_events_with_headers, format_events_for_response
 
 router = Router()
@@ -242,19 +242,52 @@ async def temp_city_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(AfishaFlowFSM.temp_choosing_event_types, F.data.startswith("toggle_event_type:"))
 async def temp_toggle_type(callback: CallbackQuery, state: FSMContext): 
-    event_type = callback.data.split(":")[1]
+    event_type_key = callback.data.split(":")[1]
+    
     data = await state.get_data()
-    selected = data.get("temp_event_types", [])
-    if event_type in selected:
-        selected.remove(event_type)
+    # Обратите внимание, что здесь ключ в state называется 'temp_event_types'
+    selected_values = data.get("temp_event_types", [])
+
+    all_event_keys = get_event_type_keys()
+    all_storage_values = [get_event_type_storage_value(key) for key in all_event_keys]
+    
+    # --- ИСПРАВЛЕННАЯ ЛОГИКА ---
+    
+    if event_type_key == 'all':
+        # Если нажата кнопка "Выбрать/Снять все"
+        current_selection_set = set(selected_values)
+        all_values_set = set(all_storage_values)
+        
+        # Если выбраны не все, то выбираем все. Иначе - очищаем.
+        if current_selection_set != all_values_set:
+            selected_values = all_storage_values
+        else:
+            selected_values = []
     else:
-        selected.append(event_type)
-    await state.update_data(temp_event_types=selected)
+        # Если нажата обычная кнопка с типом события
+        if event_type_key in selected_values:
+            selected_values.remove(event_type_key)
+        else:
+            selected_values.append(event_type_key)
+            
+    # --- КОНЕЦ ИСПРАВЛЕННОЙ ЛОГИКИ ---
+
+    # Сохраняем обновленный список в state под правильным ключом
+    await state.update_data(temp_event_types=selected_values)
     
     lexicon = Lexicon(callback.from_user.language_code)
-    await callback.message.edit_reply_markup(
-        reply_markup=kb.get_event_type_selection_keyboard(lexicon, selected)
-    )
+    
+    try:
+        # Перерисовываем клавиатуру
+        await callback.message.edit_reply_markup(
+            reply_markup=kb.get_event_type_selection_keyboard(lexicon, selected_values)
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            pass
+        else:
+            raise
+    
     await callback.answer()
 
 @router.callback_query(AfishaFlowFSM.temp_choosing_event_types, F.data.startswith("finish_preferences_selection:"))

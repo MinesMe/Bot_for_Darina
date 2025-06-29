@@ -49,34 +49,42 @@ def get_home_city_selection_keyboard(top_cities: list, lexicon) -> InlineKeyboar
 
 def get_event_type_selection_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:
     """
-    Создает клавиатуру выбора типов событий.
-    - Текст на кнопке зависит от языка пользователя.
-    - В callback_data всегда отправляется РУССКОЕ название.
-    - `selected_types` теперь ожидает список русских названий.
+    Создает клавиатуру выбора типов событий с кнопкой "Выбрать все".
+    - `selected_types` ожидает список русских названий.
     """
     if selected_types is None:
         selected_types = []
     builder = InlineKeyboardBuilder()
 
-    # 1. Получаем список универсальных ключей ('concert', 'theater'...)
     event_keys = get_event_type_keys()
+    all_event_storage_values = [get_event_type_storage_value(key) for key in event_keys]
 
-    # 2. Итерируемся по ключам, а не по названиям
+    # --- ИЗМЕНЕНИЕ 1: Добавляем кнопку "Выбрать/Снять все" ---
+    # Проверяем, все ли типы уже выбраны
+    all_selected = set(all_event_storage_values) == set(selected_types)
+    
+    # Текст кнопки меняется в зависимости от состояния
+    select_all_text = lexicon.get('unselect_all_button') if all_selected else lexicon.get('select_all_button')
+    
+    # Добавляем кнопку в первую очередь
+    
+    # --- КОНЕЦ ИЗМЕНЕНИЯ 1 ---
+
+    builder.button(text=select_all_text, callback_data="toggle_event_type:all")
+
+    # Генерируем кнопки для каждого типа событий (этот код у вас уже есть)
     for key in event_keys:
-        # 3. Получаем текст для отображения на языке пользователя
         display_name = get_event_type_display_name(key, lexicon.lang_code)
-
-        # 4. Получаем значение для сохранения в БД (всегда русское)
         storage_value = get_event_type_storage_value(key)
-
-        # 5. Проверяем, выбрано ли уже это значение
         text = f"✅ {display_name}" if storage_value in selected_types else f"⬜️ {display_name}"
-
-        # 6. Создаем кнопку: текст для юзера, русское значение для хэндлера
         builder.button(text=text, callback_data=f"toggle_event_type:{storage_value}")
 
-    builder.adjust(2)
-    # Ваша кнопка "Готово" остается без изменений
+    
+    # --- ИЗМЕНЕНИЕ 2: Адаптируем расположение кнопок ---
+    # Первая кнопка ("Выбрать все") будет в своем ряду, остальные по 2 в ряду.
+    builder.adjust(1,2)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ 2 ---
+    
     builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data="finish_preferences_selection:True"))
     return builder.as_markup()
 

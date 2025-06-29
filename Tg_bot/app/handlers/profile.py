@@ -12,6 +12,8 @@ from app import keyboards as kb
 from ..lexicon import Lexicon
 from .subscriptions import SubscriptionFlow 
 from ..database.models import Event, Subscription # Импортируем модели для type hinting
+from aiogram.exceptions import TelegramBadRequest
+from ..lexicon import get_event_type_keys, get_event_type_storage_value
 
 router = Router()
 
@@ -161,13 +163,21 @@ async def cq_edit_city_selected(callback: CallbackQuery, state: FSMContext):
     city_name = callback.data.split(":", 1)[1]
     await state.update_data(home_city=city_name)
     await state.set_state(EditMainGeoFSM.choosing_event_types)
+    
     lexicon = Lexicon(callback.from_user.language_code)
+    
+    # --- ИЗМЕНЕНИЕ: Загружаем текущие предпочтения из БД ---
     prefs = await db.get_user_preferences(callback.from_user.id)
     current_types = prefs.get("preferred_event_types", []) if prefs else []
+    
+    # Сохраняем их в state, чтобы хэндлер toggle мог с ними работать
     await state.update_data(selected_event_types=current_types)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     text = lexicon.get('edit_geo_event_types_prompt').format(city_name=hbold(city_name))    
     await callback.message.edit_text(
-        text    ,
+        text,
+        # Передаем текущие типы в клавиатуру, чтобы она отрисовала галочки
         reply_markup=kb.get_edit_event_type_keyboard(lexicon, current_types),
         parse_mode="HTML"
     )
@@ -176,14 +186,43 @@ async def cq_edit_city_selected(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(EditMainGeoFSM.choosing_event_types, F.data.startswith("edit_toggle_event_type:"))
 async def cq_edit_toggle_type(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор/снятие типа события в режиме редактирования."""
-    event_type = callback.data.split(":")[1]
+    event_type_key = callback.data.split(":")[1]
+    
     data = await state.get_data()
-    selected = data.get("selected_event_types", [])
-    if event_type in selected: selected.remove(event_type)
-    else: selected.append(event_type)
-    await state.update_data(selected_event_types=selected)
+    selected_values = data.get("selected_event_types", [])
+
+    all_event_keys = get_event_type_keys()
+    all_storage_values = [get_event_type_storage_value(key) for key in all_event_keys]
+    
+    # --- НОВАЯ ЛОГИКА ДЛЯ ОБРАБОТКИ КНОПОК ---
+    if event_type_key == 'all':
+        current_selection_set = set(selected_values)
+        all_values_set = set(all_storage_values)
+        
+        if current_selection_set != all_values_set:
+            selected_values = all_storage_values
+        else:
+            selected_values = []
+    else:
+        if event_type_key in selected_values:
+            selected_values.remove(event_type_key)
+        else:
+            selected_values.append(event_type_key)
+    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
+    await state.update_data(selected_event_types=selected_values)
     lexicon = Lexicon(callback.from_user.language_code)
-    await callback.message.edit_reply_markup(reply_markup=kb.get_edit_event_type_keyboard(lexicon, selected))
+    
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=kb.get_edit_event_type_keyboard(lexicon, selected_values)
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            pass
+        else:
+            raise
+    
     await callback.answer()
 
 @router.callback_query(EditMainGeoFSM.choosing_event_types, F.data == "finish_edit_preferences")
