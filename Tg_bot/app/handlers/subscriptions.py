@@ -468,11 +468,47 @@ async def cq_unsubscribe_item(callback: CallbackQuery, state: FSMContext):
     await show_favorites_list(callback)
 
 
+async def show_next_recommendation(callback: CallbackQuery, state: FSMContext):
+    """
+    Вспомогательная функция для показа следующей рекомендации из очереди.
+    """
+    data = await state.get_data()
+    queue = data.get("recommendation_queue", [])
+    
+    if not queue:
+        # Очередь пуста, завершаем флоу
+        await state.clear()
+        return
+
+    # Достаем следующую рекомендацию (первую в списке)
+    next_rec_item = queue[0]
+    
+    lexicon = Lexicon(callback.from_user.language_code)
+    text_header = lexicon.get('recommendations_after_add_favorite').format(artist_name=hbold(next_rec_item['source_artist_name'].title()))
+    
+    keyboard = kb.get_recommended_artists_keyboard(next_rec_item['recommended_artists'], lexicon, set())
+    
+    # Отправляем новое сообщение, так как старое мы уже отредактировали
+    sent_message = await callback.message.answer(
+        text=text_header,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Обновляем ID сообщения в самой очереди
+    next_rec_item["message_id"] = sent_message.message_id
+    
+    # Обновляем FSM: оставляем очередь как есть, но сбрасываем текущий выбор
+    await state.update_data(
+        recommendation_queue=queue,
+        current_selection_ids=[] # Сбрасываем выбор для новой рекомендации
+    )
+
+
 @router.callback_query(RecommendationFlow.selecting_artists, F.data.startswith("rec_toggle:"))
 async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContext):
     """
-    Обрабатывает нажатие на кнопку с рекомендованным артистом,
-    добавляя или удаляя его из списка выбранных.
+    Обрабатывает выбор артиста в ТЕКУЩЕЙ активной рекомендации.
     """
     try:
         artist_id = int(callback.data.split(":")[1])
@@ -481,24 +517,27 @@ async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContex
         return
 
     data = await state.get_data()
-    # Получаем список СЛОВАРЕЙ из state
-    all_artists_data = data.get('recommended_artists', []) 
-    selected_ids = set(data.get('selected_artist_ids', []))
+    queue = data.get("recommendation_queue", [])
+    if not queue:
+        await callback.answer("Session expired.", show_alert=True)
+        await state.clear()
+        return
 
-    # "Переключаем" ID в множестве
+    # Работаем с первой (активной) рекомендацией в очереди
+    active_rec_item = queue[0]
+    all_artists_data = active_rec_item.get('recommended_artists', [])
+    selected_ids = set(data.get('current_selection_ids', []))
+
     if artist_id in selected_ids:
         selected_ids.remove(artist_id)
     else:
         selected_ids.add(artist_id)
     
-    # Обновляем данные в state
-    await state.update_data(selected_artist_ids=list(selected_ids))
+    await state.update_data(current_selection_ids=list(selected_ids))
 
     lexicon = Lexicon(callback.from_user.language_code)
     
     try:
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Передаем в клавиатуру СПИСОК СЛОВАРЕЙ, который мы получили из state
         await callback.message.edit_reply_markup(
             reply_markup=kb.get_recommended_artists_keyboard(
                 all_artists_data, 
@@ -507,10 +546,8 @@ async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContex
             )
         )
     except TelegramBadRequest as e:
-        if "message is not modified" in str(e):
-            pass
-        else:
-            raise
+        if "message is not modified" in str(e): pass
+        else: raise
     
     await callback.answer()
 
@@ -518,84 +555,79 @@ async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContex
 @router.callback_query(RecommendationFlow.selecting_artists, F.data == "rec_finish")
 async def cq_finish_recommendation_selection(callback: CallbackQuery, state: FSMContext):
     """
-    Обрабатывает нажатие на кнопку "Готово", сохраняет выбранных артистов
-    и запускает поиск их событий.
+    Завершает ТЕКУЩУЮ рекомендацию, обрабатывает выбор и показывает следующую из очереди.
     """
     data = await state.get_data()
-    selected_ids = data.get('selected_artist_ids', [])
-    # --- ИЗМЕНЕНИЕ 1: Получаем полные данные о рекомендованных артистах ---
-    all_artists_data = data.get('recommended_artists', [])
-    message_id_to_edit = data.get('message_id_to_edit')
+    queue = data.get("recommendation_queue", [])
+    selected_ids = data.get('current_selection_ids', [])
+    
+    if not queue:
+        await callback.answer("Session expired.", show_alert=True)
+        await state.clear()
+        return
+
+    active_rec_item = queue[0]
+    message_id_to_edit = active_rec_item.get('message_id')
     
     lexicon = Lexicon(callback.from_user.language_code)
 
+    # Убираем обработанную рекомендацию из очереди
+    remaining_queue = queue[1:]
+    await state.update_data(recommendation_queue=remaining_queue)
+
+    # Сначала отвечаем на callback, чтобы убрать "часики"
+    await callback.answer()
+
     if not selected_ids:
-        await callback.answer(lexicon.get('nothing_to_add_alert'), show_alert=True)
+        # Ничего не выбрано
+        try:
+            if message_id_to_edit:
+                await callback.bot.edit_message_text(
+                    chat_id=callback.from_user.id, message_id=message_id_to_edit,
+                    text=lexicon.get('ok_button'), reply_markup=None
+                )
+        except TelegramBadRequest: pass
+        
+        # Сразу показываем следующую рекомендацию
+        await show_next_recommendation(callback, state)
         return
 
-    # Получаем общую мобильность пользователя
+    # Если что-то выбрано, выполняем всю логику
     general_mobility = await db.get_general_mobility(callback.from_user.id) or []
-
-    # Добавляем выбранных артистов в "Избранное"
     async with db.async_session() as session:
         for artist_id in selected_ids:
             await db.add_artist_to_favorites(session, callback.from_user.id, artist_id, general_mobility)
         await session.commit()
 
-    # Редактируем исходное сообщение с рекомендациями
     final_text = lexicon.get('favorites_added_final').format(count=len(selected_ids))
     try:
         if message_id_to_edit:
             await callback.bot.edit_message_text(
-                chat_id=callback.from_user.id,
-                message_id=message_id_to_edit,
-                text=final_text,
-                reply_markup=None
+                chat_id=callback.from_user.id, message_id=message_id_to_edit,
+                text=final_text, reply_markup=None
             )
-    except TelegramBadRequest:
-        pass
+    except TelegramBadRequest: pass
 
-    # Ищем события для выбранных артистов
     found_events = await db.get_future_events_for_artists(selected_ids)
-
-    if not found_events:
-        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
-        await callback.message.answer(no_events_text)
-        await state.clear()
-        await callback.answer()
-        return
-
-    # --- ИЗМЕНЕНИЕ 2: Собираем список имен для передачи в форматер ---
-    selected_artist_names = [
-        artist['name'] for artist in all_artists_data 
-        if artist['artist_id'] in selected_ids
-    ]
-
-    # --- ИЗМЕНЕНИЕ 3: Передаем список имен в форматер ---
-    response_text, event_ids_to_subscribe = await format_events_by_artist(
-        found_events, 
-        selected_artist_names, # <-- Вот он, наш новый аргумент
-        lexicon
-    )
-
-    if not response_text:
-        no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
-        await callback.message.answer(no_events_text)
-        await state.clear()
-        await callback.answer()
-        return
-
-    # Устанавливаем состояние для добавления в подписки
-    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
-    await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
+    if found_events:
+        all_artists_data = active_rec_item.get('recommended_artists', [])
+        selected_artist_names = [
+            artist['name'] for artist in all_artists_data 
+            if artist['artist_id'] in selected_ids
+        ]
+        
+        response_text, event_ids_to_subscribe = await format_events_by_artist(
+            found_events, selected_artist_names, lexicon
+        )
+        if response_text:
+            # Важно: используем `state.set_data`, а не `update_data`, чтобы перезаписать старые `last_shown_event_ids`
+            await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+            await state.set_data({'last_shown_event_ids': event_ids_to_subscribe})
+            await send_long_message(
+                message=callback.message, text=response_text, lexicon=lexicon,
+                parse_mode=ParseMode.HTML, disable_web_page_preview=True,
+                reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+            )
     
-    # Отправляем сообщение с событиями
-    await send_long_message(
-        message=callback.message,
-        text=response_text,
-        lexicon=lexicon,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-        reply_markup=kb.get_afisha_actions_keyboard(lexicon)
-    )
-    await callback.answer()
+    # После всей обработки показываем следующую рекомендацию из очереди
+    await show_next_recommendation(callback, state)

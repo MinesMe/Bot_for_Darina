@@ -226,6 +226,7 @@ class Lexicon:
 
                 'no_info': "Нет информации",
                 'no_future_events_for_favorites': "На данный момент для них нет предстоящих событий. Мы сообщим, как только что-то появится!",
+                'ok_button': 'Хорошо!',
 
                 
             },
@@ -400,6 +401,7 @@ class Lexicon:
 
                 'no_info': "No information",
                 'no_future_events_for_favorites': "Currently, there are no upcoming events for them. We'll notify you as soon as something is announced!",
+                'ok_button': 'Okay!',
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

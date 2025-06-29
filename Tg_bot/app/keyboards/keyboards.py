@@ -127,14 +127,20 @@ def get_region_selection_keyboard(
 
 
 def get_recommended_artists_keyboard(
-    artists_data: list[dict], # <-- Ожидает список словарей
+    artists_data: list[dict],
     lexicon,
     selected_artist_ids: set = None
 ) -> InlineKeyboardMarkup:
-    # ...
+    """
+    Создает клавиатуру для выбора рекомендованных артистов.
+    Кнопка "Готово" отображается всегда.
+    """
+    if selected_artist_ids is None:
+        selected_artist_ids = set()
+        
     builder = InlineKeyboardBuilder()
 
-    for artist_dict in artists_data: # <-- итерируемся по словарям
+    for artist_dict in artists_data:
         artist_id = artist_dict['artist_id']
         artist_name = artist_dict['name']
         display_name = artist_name.title()
@@ -144,13 +150,13 @@ def get_recommended_artists_keyboard(
 
     builder.adjust(1)
     
-    if selected_artist_ids:
-        builder.row(
-            InlineKeyboardButton(
-                text=lexicon.get('finish_button'),
-                callback_data="rec_finish"
-            )
+    # --- ИЗМЕНЕНИЕ: Убираем условие, кнопка "Готово" теперь есть всегда ---
+    builder.row(
+        InlineKeyboardButton(
+            text=lexicon.get('finish_button'),
+            callback_data="rec_finish"
         )
+    )
         
     return builder.as_markup()
 
