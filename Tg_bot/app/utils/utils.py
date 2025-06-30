@@ -177,3 +177,98 @@ async def format_events_by_artist(
         return None, None
         
     return "\n".join(response_parts), event_ids_in_order
+
+
+async def format_events_by_artist_with_region_split(
+    events: list,
+    tracked_regions: list[str],
+    lexicon: Lexicon
+) -> tuple[str | None, list[int] | None]:
+    """
+    Форматирует события, разделяя их на две группы: в отслеживаемых регионах и в остальных.
+    Возвращает готовый текст и сквозной список ID событий.
+    """
+    if not events:
+        return None, None
+
+    # 1. Разделяем события на две группы
+    events_in_tracked_regions = []
+    events_in_other_regions = []
+    tracked_regions_set = set(r.lower() for r in tracked_regions)
+
+    for event in events:
+        # Проверяем, не было ли это событие уже добавлено (на случай дублей в исходных данных)
+        is_already_added = any(e.event_id == event.event_id for e in events_in_tracked_regions + events_in_other_regions)
+        if is_already_added:
+            continue
+            
+        event_country = event.venue.city.country.name.lower() if event.venue and event.venue.city and event.venue.city.country else ""
+        event_city = event.venue.city.name.lower() if event.venue and event.venue.city else ""
+        
+        if event_country in tracked_regions_set or event_city in tracked_regions_set:
+            events_in_tracked_regions.append(event)
+        else:
+            events_in_other_regions.append(event)
+
+    # Сортируем обе группы по дате
+    events_in_tracked_regions.sort(key=lambda e: (e.date_start is None, e.date_start))
+    events_in_other_regions.sort(key=lambda e: (e.date_start is None, e.date_start))
+
+    # 2. Собираем единый список для форматирования с заголовками-разделителями
+    # Мы используем словари-маркеры, чтобы знать, где вставлять заголовки
+    items_to_format = []
+    if events_in_tracked_regions:
+        items_to_format.append({'type': 'header', 'text': lexicon.get('favorite_events_in_tracked_regions')})
+        items_to_format.extend(events_in_tracked_regions)
+
+    if events_in_other_regions:
+        # Если были события в отслеживаемых, добавим визуальный разделитель
+        if events_in_tracked_regions:
+             items_to_format.append({'type': 'separator'})
+        items_to_format.append({'type': 'header', 'text': lexicon.get('favorite_events_in_other_regions')})
+        items_to_format.extend(events_in_other_regions)
+
+    if not items_to_format:
+        return None, None
+
+    # 3. Единый цикл форматирования
+    response_parts = []
+    event_ids_in_order = []
+    counter = 1
+
+    for item in items_to_format:
+        # Если это маркер заголовка
+        if isinstance(item, dict) and item['type'] == 'header':
+            response_parts.append(hbold(item['text']))
+            continue
+        # Если это маркер разделителя
+        if isinstance(item, dict) and item['type'] == 'separator':
+            response_parts.append("\n" + "—" * 15 + "\n")
+            continue
+            
+        # Если это обычный объект события (event)
+        event = item
+        event_ids_in_order.append(event.event_id)
+
+        # --- Блок форматирования карточки (теперь он здесь один раз) ---
+        date_str = event.date_start.strftime('%d.%m.%Y %H:%M') if event.date_start else lexicon.get('date_not_specified')
+        place_info = "—"
+        if event.venue:
+            city_name = event.venue.city.name if event.venue.city else ""
+            country_name = event.venue.city.country.name if event.venue.city and event.venue.city.country else ""
+            place_info = f"{event.venue.name}, {city_name} ({country_name})"
+        tickets_str = event.tickets_info if event.tickets_info and event.tickets_info != "В наличии" else lexicon.get('no_info')
+        url = event.links[0].url if event.links else None
+        title_text = f"{counter}. {event.title}"
+        title_with_link = f'<a href="{url}">{hbold(title_text)}</a>' if url else hbold(title_text)
+        
+        event_card = (
+            f"{title_with_link}\n"
+            f"📅 {date_str}\n"
+            f"📍 {hitalic(place_info)}\n"
+            f"🎟️ Билеты: {hitalic(tickets_str)}"
+        )
+        response_parts.append(event_card)
+        counter += 1
+        
+    return "\n\n".join(response_parts), event_ids_in_order

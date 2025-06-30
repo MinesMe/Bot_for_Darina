@@ -29,24 +29,6 @@ from app.handlers.states import SubscriptionFlow,RecommendationFlow,CombinedFlow
 router = Router()
 
 
-# class SubscriptionFlow(StatesGroup):
-#     # Онбординг общей мобильности
-#     general_mobility_onboarding = State()
-#     selecting_general_regions = State()
-#     # Основной флоу добавления
-#     waiting_for_action = State()
-#     waiting_for_artist_name = State()
-#     waiting_for_artist_name = State()
-#     choosing_mobility_type = State()
-#     selecting_custom_regions = State()
-
-# class RecommendationFlow(StatesGroup):
-#     selecting_artists = State()
-
-# class CombinedFlow(StatesGroup):
-#     active = State()
-
-
 async def trigger_recommendation_flow(user_id: int, bot: Bot, state: FSMContext, added_artist_names: list[str]):
     """
     Запускает флоу рекомендаций: запрашивает, отправляет и устанавливает FSM.
@@ -540,14 +522,14 @@ async def cq_finish_general_selection(callback: CallbackQuery, state: FSMContext
     )
 
 
-@router.callback_query(F.data.startswith("unsubscribe:"))
-async def cq_unsubscribe_item(callback: CallbackQuery, state: FSMContext):
-    """Удаление подписки из меню."""
-    lexicon = Lexicon(callback.from_user.language_code)
-    item_name = callback.data.split(":", 1)[1]
-    await db.remove_subscription(callback.from_user.id, item_name)
-    await callback.answer(lexicon.get('subs_removed_alert').format(item_name=item_name))
-    await show_favorites_list(callback)
+# @router.callback_query(F.data.startswith("unsubscribe:"))
+# async def cq_unsubscribe_item(callback: CallbackQuery, state: FSMContext):
+#     """Удаление подписки из меню."""
+#     lexicon = Lexicon(callback.from_user.language_code)
+#     item_name = callback.data.split(":", 1)[1]
+#     await db.remove_subscription(callback.from_user.id, item_name)
+#     # await callback.answer(lexicon.get('subs_removed_alert').format(item_name=item_name))
+#     await show_favorites_list(callback)
 
 
 @router.callback_query(CombinedFlow.active, F.data.startswith("rec_toggle:"))

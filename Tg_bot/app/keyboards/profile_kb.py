@@ -40,8 +40,6 @@ def get_manage_subscriptions_keyboard(subscriptions: list, lexicon) -> InlineKey
                 callback_data=f"view_subscription:{sub_event.event_id}"
             )
         builder.adjust(1)
-    
-    builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data="back_to_profile"))
     return builder.as_markup()
 
 

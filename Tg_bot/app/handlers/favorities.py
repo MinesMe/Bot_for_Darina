@@ -10,13 +10,15 @@ from ..database.requests import requests as db
 from app import keyboards as kb
 from ..lexicon import Lexicon
 from ..database.models import Artist
+from aiogram.enums import ParseMode
+
+
+from app.utils.utils import format_events_by_artist_with_region_split
+from app.handlers.afisha import send_long_message, AddToSubsFSM
 
 router = Router()
 
-class FavoritesFSM(StatesGroup):
-    viewing_list = State()
-    viewing_artist = State()
-    editing_mobility = State()
+from app.handlers.states import FavoritesFSM
 
 # --- ХЕЛПЕРЫ ДЛЯ ПОКАЗА ЭКРАНОВ ---
 
@@ -85,6 +87,57 @@ async def cq_view_favorite_artist(callback: CallbackQuery, state: FSMContext):
     artist_id = int(callback.data.split(":")[1])
     await state.update_data(current_artist_id=artist_id)
     await show_single_favorite_menu(callback, state)
+
+@router.callback_query(FavoritesFSM.viewing_artist, F.data.startswith("view_events_for_favorite:"))
+async def cq_view_events_for_favorite(callback: CallbackQuery, state: FSMContext):
+    """
+    Показывает предстоящие события для выбранного артиста,
+    разделяя их на отслеживаемые и прочие регионы.
+    """
+    lexicon = Lexicon(callback.from_user.language_code)
+    artist_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+    
+    # 1. Получаем все будущие события для артиста
+    all_future_events = await db.get_future_events_for_artists([artist_id])
+
+    if not all_future_events:
+        await callback.answer("Для этого артиста пока нет предстоящих событий.", show_alert=True)
+        return
+
+    # 2. Получаем детали избранного, чтобы знать отслеживаемые регионы
+    favorite_details = await db.get_favorite_details(user_id, artist_id)
+    tracked_regions = favorite_details.regions if favorite_details else []
+    
+    # 3. Получаем имя артиста из state для заголовка
+    data = await state.get_data()
+    artist_name = data.get("artist_name", lexicon.get('unknown_artist'))
+
+    # 4. Форматируем сообщение с разделением на регионы
+    response_text, event_ids_to_subscribe = await format_events_by_artist_with_region_split(
+        events=all_future_events,
+        tracked_regions=tracked_regions,
+        lexicon=lexicon
+    )
+    
+    # 5. Устанавливаем новое состояние и сохраняем ID для подписки
+    await state.set_state(FavoritesFSM.viewing_artist_events)
+    await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
+    
+    # 6. Отправляем сообщение
+    header_text = lexicon.get('favorite_events_header').format(artist_name=hbold(artist_name))
+    await callback.message.answer(header_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    
+    await send_long_message(
+        message=callback.message,
+        text=response_text,
+        lexicon=lexicon,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+    )
+    
+    await callback.answer()
 
 @router.callback_query(F.data == "back_to_favorites_list")
 async def cq_back_to_favorites_list(callback: CallbackQuery, state: FSMContext):

@@ -189,6 +189,7 @@ class Lexicon:
                 'date_not_specified': "Дата не указана",
                 'subscription_details_view': "Подписка на событие: {title}\nДата: {date}\n\nСтатус: {status}",
                 'profile_button_manage_subs': "⭐ Мои подписки", # Для клавиатуры профиля
+                'profile_button_favorites': "⭐ Избранные", # Новая кнопка в профиле
 
                 'afisha_nothing_found_for_query': "По вашему запросу ничего не найдено.",
                 'afisha_prefs_not_configured_alert': "Ваши предпочтения не настроены. Пожалуйста, настройте их в Профиле.",
@@ -234,6 +235,11 @@ class Lexicon:
 
                 'artist_search_exact_match': "Вот кого я нашел:",
                 'artist_search_suggestion': "Точного совпадения не найдено. Возможно, вы имели в виду кого-то из этих исполнителей?",
+                'favorite_view_events_button': '🎟️ Просмотреть события',
+                'favorite_events_header': 'Найденные события для {artist_name}:',
+                'favorite_events_in_tracked_regions': '📍 В отслеживаемых регионах:',
+                'favorite_events_in_other_regions': '🌍 Также найдены в других регионах:',
+                'favorite_edit_regions_button':  "🌍 Изменить регионы для артиста",
 
                 
             },
@@ -416,6 +422,12 @@ class Lexicon:
                 'add_more_prompt': "\n\nTo add more, just type the next artist's name. Or press 'Done' to finish.",
                 'artist_search_exact_match': "Here's who I found:",
                 'artist_search_suggestion': "No exact match found. Perhaps you meant one of these artists?",
+                'favorite_view_events_button': '🎟️ View Events',
+                'favorite_events_header': 'Found events for {artist_name}:',
+                'favorite_events_in_tracked_regions': '📍 In Tracked Regions:',
+                'favorite_events_in_other_regions': '🌍 Also Found in Other Regions:',
+                'favorite_edit_regions_button': "🌍 Edit regions for this artist", # Исправил текст для логичности
+                'profile_button_favorites': "⭐ My Favorites",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

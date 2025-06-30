@@ -33,8 +33,13 @@ def get_single_favorite_manage_keyboard(artist_id: int, lexicon) -> InlineKeyboa
     Создает клавиатуру для управления одним конкретным избранным артистом.
     """
     builder = InlineKeyboardBuilder()
+    # --- НОВАЯ КНОПКА ---
+    builder.button(
+        text=lexicon.get('favorite_view_events_button'),
+        callback_data=f"view_events_for_favorite:{artist_id}"
+    )
+    # --- КОНЕЦ НОВОЙ КНОПКИ ---
     
-    # ИЗМЕНЕНИЕ: Меняем текст кнопки и ее callback_data для ясности
     builder.button(
         text=lexicon.get('favorite_edit_regions_button'),
         callback_data=f"edit_fav_regions:{artist_id}"

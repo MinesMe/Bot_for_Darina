@@ -17,6 +17,7 @@ from ..lexicon import Lexicon,get_event_type_keys, get_event_type_storage_value
 from app.utils.utils import format_events_with_headers, format_events_for_response
 from aiogram.filters import or_f
 from app.handlers.states import AfishaFlowFSM,AddToSubsFSM,CombinedFlow
+from app.handlers.states import FavoritesFSM
 
 router = Router()
 
@@ -371,7 +372,14 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
         # )
 
 # --- ДОБАВЛЕНИЕ В ПОДПИСКИ (остается без изменений) ---
-@router.callback_query(F.data == "add_events_to_subs",  or_f(AfishaFlowFSM.choosing_filter_type, CombinedFlow.active))
+@router.callback_query(F.data == "add_events_to_subs",  or_f(
+        AfishaFlowFSM.choosing_filter_type,
+        # --- ДОБАВЛЯЕМ ЭТО СОСТОЯНИЕ ---
+        AfishaFlowFSM.temp_choosing_event_types,
+        # --------------------------------
+        CombinedFlow.active,
+        FavoritesFSM.viewing_artist_events
+    ))
 async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lexicon = Lexicon(callback.from_user.language_code)
@@ -380,7 +388,6 @@ async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
-    lexicon = Lexicon(callback.from_user.language_code)
     await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
     await callback.answer()
 

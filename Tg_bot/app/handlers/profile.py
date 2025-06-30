@@ -408,7 +408,6 @@ async def cq_delete_subscription(callback: CallbackQuery, state: FSMContext):
     
     # 2. Сообщаем пользователю об успехе
     lexicon = Lexicon(callback.from_user.language_code)
-    await callback.answer(lexicon.get('subs_removed_alert'), show_alert=True)
     
     # 3. Обновляем список подписок, чтобы пользователь увидел изменения
     # ВАЖНО: Мы должны передать state, так как show_subscriptions_list его ожидает

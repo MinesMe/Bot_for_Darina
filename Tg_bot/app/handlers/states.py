@@ -29,3 +29,9 @@ class CombinedFlow(StatesGroup):
 # Если RecommendationFlow еще используется, добавьте и его
 class RecommendationFlow(StatesGroup):
    selecting_artists = State()
+
+class FavoritesFSM(StatesGroup):
+    viewing_list = State()
+    viewing_artist = State()
+    editing_mobility = State()
+    viewing_artist_events = State()
