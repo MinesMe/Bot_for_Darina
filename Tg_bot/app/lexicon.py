@@ -229,6 +229,7 @@ class Lexicon:
                 'recommendations_after_add_favorite': "Мы заметили, что вы добавили в избранное {artist_name}! ✨\n\nНа основе этого, возможно, вам также понравятся эти исполнители:",
                 'select_all_button': 'Выбрать все',
                 'unselect_all_button': 'Снять все',
+                'artist_already_in_queue_alert': "Артист {artist_name} уже в очереди на добавление.",
                 
             },
             'be': {
@@ -405,6 +406,7 @@ class Lexicon:
                 'recommendations_after_add_favorite': "We noticed you've added {artist_name} to your favorites! ✨\n\nBased on this, you might also like these artists:",
                 'select_all_button': 'Select All',
                 'unselect_all_button': 'Unselect All',  
+                'artist_already_in_queue_alert': "Artist {artist_name} is already in the adding queue.",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---
