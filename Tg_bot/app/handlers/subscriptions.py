@@ -352,13 +352,24 @@ async def handle_import_artists(callback: CallbackQuery, state: FSMContext):
 @router.message(SubscriptionFlow.waiting_for_artist_name, F.text)
 async def process_artist_search(message: Message, state: FSMContext):
     """Поиск артиста по имени."""
-    found_artists = await db.find_artists_fuzzy(message.text)
+    found_artists, is_exact_match = await db.find_artists_fuzzy(message.text)
+    
     lexicon = Lexicon(message.from_user.language_code)
+
     if not found_artists:
         await message.answer(lexicon.get('favorites_not_found_try_again'))
     else:
-        await message.answer(lexicon.get('favorites_found_prompt_select_artist'),
-                             reply_markup=kb.found_artists_keyboard(found_artists, lexicon))
+        # --- ИЗМЕНЕНИЕ: Выбираем текст в зависимости от флага ---
+        if is_exact_match:
+            text_to_send = lexicon.get('artist_search_exact_match')
+        else:
+            text_to_send = lexicon.get('artist_search_suggestion')
+            
+        await message.answer(
+            text_to_send,
+            reply_markup=kb.found_artists_keyboard(found_artists, lexicon)
+        )
+
 
 @router.callback_query(F.data.startswith("subscribe_to_artist:"))
 async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):

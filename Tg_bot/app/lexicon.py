@@ -79,8 +79,8 @@ class Lexicon:
                 'profile_menu_header': "👤 Ваш Профиль",
                 'configure': 'Настроить',
                 'skip_settings': 'Пропустить настройку',
-                'profile_button_location': "📍 Изменить основное гео",
-                'profile_general_geo': '🌍 Изменить общую мобильность',
+                'profile_button_location': "📍 Изменить мои предпочтения",
+                'profile_general_geo': '🌍 Настройка общей мобильности',
                 'back_to_profile':'⬅️ Назад в профиль',
                 'back_to_choose_country': '⬅️ Назад к выбору страны',
                 'save_changes': '✅ Сохранить изменения',
@@ -150,7 +150,7 @@ class Lexicon:
                 'back_to_favorites_menu_button': "⬅️ Назад в меню 'Избранное'",
                 'back_to_favorites_list_button': "⬅️ К списку избранного",
                 'favorites_added_final': "✅ Готово! Добавлено в избранное: {count} шт.",
-                'favorite_edit_regions_button': "✏️ Изменить регионы отслеживания",
+                'favorite_edit_regions_button':  "🌍 Изменить общую мобильность",
                 'favorite_edit_regions_prompt': "Измените регионы отслеживания для: {artist_name}",
                 'favorite_regions_updated_alert': "✅ Регионы для избранного обновлены!",
                 'afisha_add_to_subs_button': "➕ Добавить в подписки",
@@ -231,6 +231,10 @@ class Lexicon:
                 'unselect_all_button': 'Снять все',
                 'artist_already_in_queue_alert': "Артист {artist_name} уже в очереди на добавление.",
                 'add_more_prompt': "\n\nЧтобы добавить еще, просто напишите имя следующего артиста. Или нажмите 'Готово', чтобы завершить.",
+
+                'artist_search_exact_match': "Вот кого я нашел:",
+                'artist_search_suggestion': "Точного совпадения не найдено. Возможно, вы имели в виду кого-то из этих исполнителей?",
+
                 
             },
             'be': {
@@ -257,8 +261,8 @@ class Lexicon:
                 'profile_menu_header': "👤 Your Profile",
                 'configure': 'Configure',
                 'skip_settings': 'Skip setup',
-                'profile_button_location': "📍 Change Main Geo",
-                'profile_general_geo': '🌍 Change General Mobility',
+                'profile_button_location': "📍 Change my preferences",
+                'profile_general_geo': '🌍 Configure General Mobility',
                 'back_to_profile':'⬅️ Back to Profile',
                 'back_to_choose_country': '⬅️ Back to country selection',
                 'save_changes': '✅ Save Changes',
@@ -329,7 +333,7 @@ class Lexicon:
                 'back_to_favorites_menu_button': "⬅️ Back to Favorites Menu",
                 'back_to_favorites_list_button': "⬅️ Back to Favorites List",
                 'favorites_added_final': "✅ Done! Added to favorites: {count} item(s).",
-                'favorite_edit_regions_button': "✏️ Edit Tracking Regions",
+                'favorite_edit_regions_button': "🌍 Edit general settings",
                 'favorite_edit_regions_prompt': "Edit tracking regions for: {artist_name}",
                 'favorite_regions_updated_alert': "✅ Favorite's regions have been updated!",
                 'afisha_add_to_subs_button': "➕ Add to Subscriptions",
@@ -410,6 +414,8 @@ class Lexicon:
                 'unselect_all_button': 'Unselect All',  
                 'artist_already_in_queue_alert': "Artist {artist_name} is already in the adding queue.",
                 'add_more_prompt': "\n\nTo add more, just type the next artist's name. Or press 'Done' to finish.",
+                'artist_search_exact_match': "Here's who I found:",
+                'artist_search_suggestion': "No exact match found. Perhaps you meant one of these artists?",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

@@ -233,19 +233,40 @@ async def set_subscription_status(user_id: int, event_id: int, status: str):
         await session.execute(stmt)
         await session.commit()
 
-async def find_artists_fuzzy(query: str, limit: int = 5) -> list[Artist]:
-    """ИЗМЕНЕНИЕ: Возвращает полные объекты Artist, а не просто имена."""
+async def find_artists_fuzzy(query: str, limit: int = 5) -> tuple[list[Artist], bool]:
+    """
+    Ищет артистов по имени.
+
+    Возвращает:
+        Кортеж: (список объектов Artist, флаг точного совпадения).
+    """
     async with async_session() as session:
         result = await session.execute(select(Artist))
         all_artists = result.scalars().all()
-        # Создаем словарь "имя -> объект" для быстрого доступа
         artist_map = {artist.name: artist for artist in all_artists}
         
-        found = fuzzy_process.extract(query, artist_map.keys(), limit=limit)
+        # Находим лучшие совпадения
+        found_tuples = fuzzy_process.extract(query, artist_map.keys(), limit=limit)
         
-        # Возвращаем объекты Artist для совпадений выше порога
-        matches = [artist_map[artist_name] for artist_name, score in found if score >= SIMILARITY_THRESHOLD]
-        return matches
+        # Фильтруем по порогу схожести
+        matches_with_scores = [
+            (artist_map[artist_name], score) 
+            for artist_name, score in found_tuples 
+            if score >= SIMILARITY_THRESHOLD
+        ]
+        
+        if not matches_with_scores:
+            return [], False
+
+        # --- ИСПРАВЛЕНИЕ: Более надежная проверка на точное совпадение ---
+        # Мы считаем совпадение точным, если оценка 99 или 100.
+        # Это защищает от мелких причуд библиотеки.
+        is_exact_match = any(score >= 99 for _, score in matches_with_scores)
+        
+        # Отделяем только объекты артистов для возврата
+        final_matches = [artist for artist, score in matches_with_scores]
+        
+        return final_matches, is_exact_match
 
 async def get_countries(home_country_selection: bool = False):
     if home_country_selection:
