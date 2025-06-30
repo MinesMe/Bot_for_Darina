@@ -73,11 +73,11 @@ async def show_single_favorite_menu(callback: CallbackQuery, state: FSMContext):
 
 # --- ХЭНДЛЕРЫ ---
 
-@router.message(F.text.in_(["⭐ Избранное", "⭐ Favorites"]))
-async def menu_favorites(message: Message, state: FSMContext):
-    """Точка входа в раздел. Очищает состояние."""
-    await state.clear()
-    await show_favorites_list(message, state)
+# @router.message(F.text.in_(["⭐ Избранное", "⭐ Favorites"]))
+# async def menu_favorites(message: Message, state: FSMContext):
+#     """Точка входа в раздел. Очищает состояние."""
+#     await state.clear()
+#     await show_favorites_list(message, state)
 
 @router.callback_query(FavoritesFSM.viewing_list, F.data.startswith("view_favorite:"))
 async def cq_view_favorite_artist(callback: CallbackQuery, state: FSMContext):

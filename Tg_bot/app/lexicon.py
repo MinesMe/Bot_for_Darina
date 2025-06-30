@@ -68,7 +68,7 @@ class Lexicon:
                 'setup_complete': "🎉 Настройка завершена! Теперь ты можешь пользоваться всеми функциями бота.",
                 'main_menu_greeting': "С возвращением, {first_name}!",
                 'main_menu_button_afisha': "🗓 Афиша",
-                'main_menu_button_subs': "➕ Найти/добавить артиста",
+                'main_menu_button_subs': "⭐ Мои подписки",
                 'main_menu_button_profile': "👤 Профиль",
                 "find_another_city": "🔎 Найти другой город",
                 'finish_button': "✅ Готово",
@@ -134,7 +134,7 @@ class Lexicon:
                 'search_prompt_enter_query_v2': "Введите название события или имя артиста для поиска:",
                 'search_searching_for_query_v2': "🔎 Ищу события: «{query_text}»...",
                 'search_no_results_found_v2': "😔 По вашему запросу «{query_text}» ничего не найдено. Попробуйте другой запрос.",
-                'main_menu_button_favorites': "⭐ Избранное",
+                'main_menu_button_favorites': "➕ Найти/добавить артиста",
                 'favorites_menu_header_empty': "У вас пока нет избранных артистов или событий. Давайте добавим первого?",
                 'favorites_menu_header': "Ваше избранное:\n{favorites_list}",
                 'favorites_list_prompt': "Ваше избранное. Нажмите на артиста/событие для управления им:",
@@ -230,6 +230,7 @@ class Lexicon:
                 'select_all_button': 'Выбрать все',
                 'unselect_all_button': 'Снять все',
                 'artist_already_in_queue_alert': "Артист {artist_name} уже в очереди на добавление.",
+                'add_more_prompt': "\n\nЧтобы добавить еще, просто напишите имя следующего артиста. Или нажмите 'Готово', чтобы завершить.",
                 
             },
             'be': {
@@ -245,7 +246,7 @@ class Lexicon:
                 'setup_complete': "🎉 Setup complete! You can now use all the bot's features.",
                 'main_menu_greeting': "Welcome back, {first_name}!",
                 'main_menu_button_afisha': "🗓 Events",
-                'main_menu_button_subs': "➕ Find/Add Artist",
+                'main_menu_button_subs': "⭐ My Subs",
                 'main_menu_button_profile': "👤 Profile",
                 "find_another_city": "🔎 Find another city",
                 'finish_button': "✅ Done",
@@ -311,7 +312,8 @@ class Lexicon:
                 'search_prompt_enter_query_v2': "Enter an event name or artist to search:",
                 'search_searching_for_query_v2': "🔎 Searching for events: '{query_text}'...",
                 'search_no_results_found_v2': "😔 Nothing was found for your query '{query_text}'. Please try another query.",
-                'main_menu_button_favorites': "⭐ Favorites",
+                'main_menu_button_favorites': "➕ Find/Add Artist",
+                'profile_button_favorites': "⭐ Favorities", # Новая кнопка в профиле
                 'favorites_menu_header_empty': "You don't have any favorite artists or events yet. Shall we add the first one?",
                 'favorites_menu_header': "Your Favorites:\n{favorites_list}",
                 'favorites_list_prompt': "Your Favorites. Click on an artist/event to manage it:",
@@ -407,6 +409,7 @@ class Lexicon:
                 'select_all_button': 'Select All',
                 'unselect_all_button': 'Unselect All',  
                 'artist_already_in_queue_alert': "Artist {artist_name} is already in the adding queue.",
+                'add_more_prompt': "\n\nTo add more, just type the next artist's name. Or press 'Done' to finish.",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

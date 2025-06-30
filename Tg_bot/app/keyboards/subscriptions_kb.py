@@ -46,14 +46,12 @@ def get_add_more_or_finish_keyboard(lexicon, show_setup_mobility_button: bool = 
     Клавиатура для цикла добавления подписок.
     """
     builder = InlineKeyboardBuilder()
-    # --- ИЗМЕНЕНИЕ --- Текст заменен на вызов lexicon.get()
-    builder.button(text=lexicon.get('add_another_artist_button'), callback_data="write_artist")
-    builder.button(text=lexicon.get('import_more_button'), callback_data="import_artists")
-    if show_setup_mobility_button:
-         # --- ИЗМЕНЕНИЕ --- Текст заменен на вызов lexicon.get()
-         builder.row(InlineKeyboardButton(text=lexicon.get('general_mobility_settings'), callback_data="setup_general_mobility"))
-    # --- ИЗМЕНЕНИЕ --- Текст заменен на вызов lexicon.get(), использован существующий ключ
-    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data="finish_adding_subscriptions"))
+    builder.row(
+        InlineKeyboardButton(
+            text=lexicon.get('finish_button'), 
+            callback_data="finish_adding_subscriptions"
+        )
+    )
     return builder.as_markup()
 
 def found_artists_keyboard(artists, lexicon) -> InlineKeyboardMarkup:

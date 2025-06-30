@@ -14,6 +14,7 @@ from .subscriptions import SubscriptionFlow
 from ..database.models import Event, Subscription # Импортируем модели для type hinting
 from aiogram.exceptions import TelegramBadRequest
 from ..lexicon import get_event_type_keys, get_event_type_storage_value
+from app.handlers.favorities import show_favorites_list
 
 router = Router()
 
@@ -311,9 +312,18 @@ async def show_subscriptions_list(callback_or_message: Message | CallbackQuery, 
         # Если это сообщение, отправляем новое
         await callback_or_message.answer(text=text, reply_markup=markup)
 
-@router.callback_query(F.data == "manage_my_subscriptions")
-async def cq_manage_my_subscriptions(callback: CallbackQuery, state: FSMContext):
-    await show_subscriptions_list(callback, state)
+
+@router.message(F.text.in_(['⭐ Мои подписки', '⭐ My Subs']))
+async def menu_show_subscriptions(message: Message, state: FSMContext):
+    """Точка входа для показа подписок на события с главной клавиатуры."""
+    await show_subscriptions_list(message, state)
+
+@router.callback_query(F.data == "manage_favorites")
+async def cq_manage_favorites(callback: CallbackQuery, state: FSMContext):
+    """Точка входа в раздел 'Избранное' из меню профиля."""
+    # Просто вызываем функцию, которая умеет показывать список избранных
+    await show_favorites_list(callback, state)
+
     
 @router.callback_query(F.data == "back_to_subscriptions_list")
 async def cq_back_to_subscriptions_list(callback: CallbackQuery, state: FSMContext):

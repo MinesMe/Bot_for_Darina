@@ -13,7 +13,7 @@ def get_profile_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=lexicon.get('profile_button_location'), callback_data="edit_main_geo")
     builder.button(text=lexicon.get('profile_general_geo'), callback_data="edit_general_mobility")
-    builder.button(text=lexicon.get('profile_button_manage_subs'), callback_data="manage_my_subscriptions")
+    builder.button(text=lexicon.get('profile_button_favorites'), callback_data="manage_favorites")
     builder.adjust(1) # Каждая кнопка на новой строке
     return builder.as_markup()
 

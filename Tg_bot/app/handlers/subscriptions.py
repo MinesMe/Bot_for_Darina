@@ -22,32 +22,32 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.storage.base import BaseStorage, StorageKey
 # ... (остальные ваши импорты)
 from app.services.recommendation import get_recommended_artists
+from app.handlers.states import SubscriptionFlow,RecommendationFlow,CombinedFlow
 
 
 
 router = Router()
 
 
-class SubscriptionFlow(StatesGroup):
-    # Онбординг общей мобильности
-    general_mobility_onboarding = State()
-    selecting_general_regions = State()
-    # Основной флоу добавления
-    waiting_for_action = State()
-    waiting_for_artist_name = State()
-    choosing_mobility_type = State()
-    selecting_custom_regions = State()
+# class SubscriptionFlow(StatesGroup):
+#     # Онбординг общей мобильности
+#     general_mobility_onboarding = State()
+#     selecting_general_regions = State()
+#     # Основной флоу добавления
+#     waiting_for_action = State()
+#     waiting_for_artist_name = State()
+#     waiting_for_artist_name = State()
+#     choosing_mobility_type = State()
+#     selecting_custom_regions = State()
 
-class RecommendationFlow(StatesGroup):
-    selecting_artists = State()
+# class RecommendationFlow(StatesGroup):
+#     selecting_artists = State()
+
+# class CombinedFlow(StatesGroup):
+#     active = State()
 
 
-async def trigger_recommendation_flow(
-    user_id: int,
-    bot: Bot,
-    storage: BaseStorage,
-    added_artist_names: list[str]
-):
+async def trigger_recommendation_flow(user_id: int, bot: Bot, state: FSMContext, added_artist_names: list[str]):
     """
     Запускает флоу рекомендаций: запрашивает, отправляет и устанавливает FSM.
     """
@@ -87,31 +87,20 @@ async def trigger_recommendation_flow(
             parse_mode=ParseMode.HTML,
         )
         
-        state_key = StorageKey(bot_id=bot.id, chat_id=user_id, user_id=user_id)
-        await storage.set_state(key=state_key, state=RecommendationFlow.selecting_artists)
-        await storage.set_data(
-            key=state_key, 
-            data={
-                "recommended_artists": recommended_artists_dicts, # Сохраняем list[dict]
-                "current_selection_ids": [],
-                "message_id_to_edit": sent_message.message_id
-            }
+        await state.update_data(
+            recommended_artists=recommended_artists_dicts,
+            current_selection_ids=[],
+            message_id_to_edit=sent_message.message_id
         )
-        logging.info(f"--> Отправлена рекомендация и установлено состояние для {user_id}")
+        logging.info(f"--> Данные для рекомендаций добавлены в state для {user_id}")
 
     except Exception as e:
         logging.error(f"Не удалось запустить флоу рекомендаций для пользователя {user_id}: {e}", exc_info=True)
 
 
-async def show_events_for_new_favorites(
-    callback: CallbackQuery,
-    state: FSMContext,
-    artist_ids: list[int],
-    artist_names: list[str]
-):
+async def show_events_for_new_favorites(callback: CallbackQuery, state: FSMContext, artist_ids: list[int], artist_names: list[str]):
     """
-    Ищет события для артистов и отправляет их пользователю.
-    Выполняется как фоновая задача.
+    Ищет события и ДОБАВЛЯЕТ `last_shown_event_ids` в текущий state.
     """
     lexicon = Lexicon(callback.from_user.language_code)
     found_events = await db.get_future_events_for_artists(artist_ids)
@@ -121,25 +110,19 @@ async def show_events_for_new_favorites(
         await callback.message.answer(no_events_text)
         return
 
-    response_text, event_ids_to_subscribe = await format_events_by_artist(
-        found_events, artist_names, lexicon
-    )
+    response_text, event_ids_to_subscribe = await format_events_by_artist(found_events, artist_names, lexicon)
     
     if not response_text:
         no_events_text = "\n\n" + lexicon.get('no_future_events_for_favorites')
         await callback.message.answer(no_events_text)
         return
 
-    # Устанавливаем состояние для добавления в подписки
-    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+    # НЕ устанавливаем state, а только обновляем данные
     await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
     
     await send_long_message(
-        message=callback.message,
-        text=response_text,
-        lexicon=lexicon,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        message=callback.message, text=response_text, lexicon=lexicon,
+        parse_mode=ParseMode.HTML, disable_web_page_preview=True,
         reply_markup=kb.get_afisha_actions_keyboard(lexicon)
     )
 
@@ -316,9 +299,9 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
         await callback.answer(lexicon.get('nothing_to_add_alert'), show_alert=True)
         return
 
+    # 1. Сохраняем артистов в БД (этот блок без изменений)
     added_artist_names = []
     added_artist_ids = []
-    
     async with db.async_session() as session:
         for item_data in pending_items:
             artist_name = item_data['item_name']
@@ -329,35 +312,26 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
                 added_artist_ids.append(artist.artist_id)
                 added_artist_names.append(artist.name)
         await session.commit()
-    
-    await state.clear()
-    
+
     if not added_artist_ids:
         await callback.message.edit_text(lexicon.get('failed_to_add_artists'))
         await callback.answer()
+        await state.clear()
         return
 
-    # Сначала показываем пользователю результат по ивентам
+    # 2. Устанавливаем НОВОЕ гибридное состояние
+    await state.set_state(CombinedFlow.active)
+    # Инициализируем пустое хранилище для этого состояния
+    await state.set_data({}) 
+
+    # 3. Редактируем сообщение, чтобы пользователь видел результат
     initial_feedback_text = lexicon.get('favorites_added_final').format(count=len(added_artist_names))
     await callback.message.edit_text(initial_feedback_text)
     
-    # --- ЗАПУСК РЕКОМЕНДАЦИЙ И ПОИСКА СОБЫТИЙ В ФОНЕ ---
-    # Мы не ждем завершения этих задач, чтобы интерфейс бота не "зависал"
-    
-    # 1. Запускаем поиск событий для добавленных артистов
-    asyncio.create_task(
-        show_events_for_new_favorites(callback, state, added_artist_ids, added_artist_names)
-    )
-    
-    # 2. Запускаем флоу рекомендаций
-    # Передаем bot и storage из контекста aiogram (data['bot'], data['state'].storage)
-    asyncio.create_task(
-        trigger_recommendation_flow(
-            user_id=callback.from_user.id,
-            bot=callback.bot,
-            storage=state.storage,
-            added_artist_names=added_artist_names
-        )
+    # 4. Запускаем две задачи, которые наполнят наш state данными
+    await asyncio.gather(
+        show_events_for_new_favorites(callback, state, added_artist_ids, added_artist_names),
+        trigger_recommendation_flow(callback.from_user.id, callback.bot, state, added_artist_names)
     )
     
     await callback.answer()
@@ -509,17 +483,29 @@ async def cq_finish_custom_selection(callback: CallbackQuery, state: FSMContext)
     await show_add_more_or_finish(callback.message, state, lexicon)
 
 async def show_add_more_or_finish(message: Message, state: FSMContext, lexicon: Lexicon):
-    """Показывает клавиатуру 'Добавить еще' / 'Готово'."""
+    """
+    Показывает очередь и предлагает написать имя следующего артиста или нажать "Готово".
+    """
     data = await state.get_data()
     pending_subs = data.get('pending_favorites', [])
-    text = lexicon.get('sub_added_to_queue')
+    
+    text = ""
     if pending_subs:
         text += lexicon.get('queue_for_adding_header')
         for sub in pending_subs:
             text += f"▫️ {hbold(sub['item_name'])}\n"
     
+    text += lexicon.get('add_more_prompt')
+    
+    # --- ИЗМЕНЕНИЕ: Устанавливаем состояние ожидания ДЕЙСТВИЯ ---
     await state.set_state(SubscriptionFlow.waiting_for_action)
-    await message.edit_text(text, reply_markup=kb.get_add_more_or_finish_keyboard(lexicon), parse_mode="HTML")
+    
+    # Отправляем сообщение с одной кнопкой "Готово"
+    await message.edit_text(
+        text, 
+        reply_markup=kb.get_add_more_or_finish_keyboard(lexicon), 
+        parse_mode=ParseMode.HTML
+    )
 
 @router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "finish_general_selection")
 async def cq_finish_general_selection(callback: CallbackQuery, state: FSMContext):
@@ -553,7 +539,7 @@ async def cq_unsubscribe_item(callback: CallbackQuery, state: FSMContext):
     await show_favorites_list(callback)
 
 
-@router.callback_query(RecommendationFlow.selecting_artists, F.data.startswith("rec_toggle:"))
+@router.callback_query(CombinedFlow.active, F.data.startswith("rec_toggle:"))
 async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContext):
     """
     Обрабатывает нажатие на кнопку с рекомендованным артистом,
@@ -603,7 +589,7 @@ async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContex
     await callback.answer()
 
 
-@router.callback_query(RecommendationFlow.selecting_artists, F.data == "rec_finish")
+@router.callback_query(CombinedFlow.active, F.data == "rec_finish")
 async def cq_finish_recommendation_selection(callback: CallbackQuery, state: FSMContext):
     """
     Обрабатывает нажатие на кнопку "Готово", сохраняет выбранных артистов
@@ -617,7 +603,14 @@ async def cq_finish_recommendation_selection(callback: CallbackQuery, state: FSM
     lexicon = Lexicon(callback.from_user.language_code)
     
     # Сразу очищаем state, так как сессия выбора рекомендаций завершена
-    await state.clear()
+    await state.update_data(
+        recommended_artists=None,
+        current_selection_ids=None,
+        message_id_to_edit=None
+    )
+    current_data = await state.get_data()
+    if not current_data.get('last_shown_event_ids'):
+        await state.clear()
     await callback.answer()
 
     # Сначала редактируем сообщение с рекомендациями
@@ -660,3 +653,12 @@ async def cq_finish_recommendation_selection(callback: CallbackQuery, state: FSM
     asyncio.create_task(
         show_events_for_new_favorites(callback, state, selected_ids, selected_artist_names)
     )
+
+@router.message(SubscriptionFlow.waiting_for_action, F.text)
+async def process_artist_search_from_action(message: Message, state: FSMContext):
+    """
+    Ловит текстовый ввод в состоянии 'waiting_for_action'
+    и передает управление основному поисковому хэндлеру.
+    """
+    # Просто вызываем уже существующий хэндлер поиска
+    await process_artist_search(message, state)

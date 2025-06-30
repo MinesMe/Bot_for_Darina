@@ -1,5 +1,6 @@
 # app/handlers/afisha.py
 
+import logging
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,26 +15,24 @@ from ..database.requests import requests as db
 from app import keyboards as kb
 from ..lexicon import Lexicon,get_event_type_keys, get_event_type_storage_value
 from app.utils.utils import format_events_with_headers, format_events_for_response
+from aiogram.filters import or_f
+from app.handlers.states import AfishaFlowFSM,AddToSubsFSM,CombinedFlow
 
 router = Router()
 
 # --- Новая, единая FSM для всего флоу "Афиши" ---
-class AfishaFlowFSM(StatesGroup):
-    choosing_date_period = State()
-    choosing_month = State()
-    choosing_filter_type = State()
-    # Состояния для временной настройки
-    temp_choosing_city = State()
-    temp_waiting_city_input = State()
-    temp_choosing_event_types = State()
+# class AfishaFlowFSM(StatesGroup):
+#     choosing_date_period = State()
+#     choosing_month = State()
+#     choosing_filter_type = State()
+#     # Состояния для временной настройки
+#     temp_choosing_city = State()
+#     temp_waiting_city_input = State()
+#     temp_choosing_event_types = State()
 
-# # FSM для поиска (остается без изменений)
-# class SearchGlobalFSM(StatesGroup):
-#     waiting_for_query = State()
-
-# FSM для добавления в подписки
-class AddToSubsFSM(StatesGroup):
-    waiting_for_event_numbers = State()
+# # FSM для добавления в подписки
+# class AddToSubsFSM(StatesGroup):
+#     waiting_for_event_numbers = State()
 
 
 # --- Вспомогательная функция для отправки длинных сообщений ---
@@ -372,7 +371,7 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
         # )
 
 # --- ДОБАВЛЕНИЕ В ПОДПИСКИ (остается без изменений) ---
-@router.callback_query(F.data == "add_events_to_subs")
+@router.callback_query(F.data == "add_events_to_subs",  or_f(AfishaFlowFSM.choosing_filter_type, CombinedFlow.active))
 async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lexicon = Lexicon(callback.from_user.language_code)
@@ -409,9 +408,20 @@ async def process_event_numbers(message: Message, state: FSMContext):
             await message.reply(lexicon.get('subs_added_success').format(count=len(event_ids_to_add)))
         
         if not event_ids_to_add and not invalid_numbers:
-             await message.reply(lexicon.get('subs_no_valid_numbers_provided'))
+            await message.reply(lexicon.get('subs_no_valid_numbers_provided'))
 
     except ValueError:
         await message.reply(lexicon.get('subs_nan_error'))
     
-    await state.clear()
+    await state.update_data(last_shown_event_ids=None)
+    
+    # 2. Проверяем, остались ли данные от флоу рекомендаций
+    current_data = await state.get_data()
+    if current_data.get('recommended_artists'):
+        # ДАННЫЕ ОСТАЛИСЬ! Возвращаем пользователя в гибридное состояние.
+        await state.set_state(CombinedFlow.active)
+        logging.info(f"Пользователь {message.from_user.id} завершил подписку и возвращен в CombinedFlow.active")
+    else:
+        # Данных не осталось, значит, пользователь закончил все дела. Очищаем state.
+        await state.clear()
+        logging.info(f"Пользователь {message.from_user.id} завершил все потоки. State очищен.")
