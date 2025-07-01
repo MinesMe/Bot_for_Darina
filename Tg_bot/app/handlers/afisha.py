@@ -285,7 +285,12 @@ async def temp_city_selected(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(AfishaFlowFSM.temp_choosing_city, F.data == "search_for_home_city")
 async def cq_afisha_search_for_city(callback: CallbackQuery, state: FSMContext):
     """Запускает поиск города во временных настройках Афиши."""
-    await start_city_search(callback, state, new_state=AfishaFlowFSM.temp_waiting_city_input)
+    await start_city_search(
+        callback, 
+        state, 
+        new_state=AfishaFlowFSM.temp_waiting_city_input,
+        back_callback="back_to_temp_country_choice"
+    )
 
 
 @router.message(AfishaFlowFSM.temp_waiting_city_input, F.text)
@@ -296,7 +301,8 @@ async def process_afisha_city_search(message: Message, state: FSMContext):
         state=state,
         country_key="temp_country",
         return_state=AfishaFlowFSM.temp_choosing_city,
-        found_cities_kb=kb.get_found_home_cities_keyboard
+        found_cities_kb=kb.get_found_home_cities_keyboard,
+        back_callback="back_to_temp_country_choice"
     )
 
 

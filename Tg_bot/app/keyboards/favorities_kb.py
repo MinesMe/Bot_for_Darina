@@ -5,26 +5,29 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from dateutil.relativedelta import relativedelta
 from app.lexicon import EVENT_TYPE_EMOJI
 
-def get_favorites_list_keyboard(favorites: list, lexicon) -> InlineKeyboardMarkup:
+def get_favorites_list_keyboard(favorites: list, lexicon, show_back_button: bool = False) -> InlineKeyboardMarkup:
     """
     Генерирует клавиатуру со списком избранных артистов.
-    Каждый артист - это кнопка для перехода в меню управления.
+    Может включать кнопку "Назад в профиль".
     """
     builder = InlineKeyboardBuilder()
     
-    # Создаем кнопки для каждого избранного артиста
     if favorites:
         for fav in favorites:
-            # Обрезаем длинные названия, чтобы избежать ошибки Telegram
             button_text = fav.name[:40] + '...' if len(fav.name) > 40 else fav.name
             builder.button(text=f"⭐ {button_text}", callback_data=f"view_favorite:{fav.artist_id}")
-        
-        # Располагаем каждую кнопку с артистом на новой строке
         builder.adjust(1)
     
-    # Кнопка "Добавить" находится в другом разделе ("Найти/добавить артиста")
-    # Кнопка "Настроить мобильность" находится глубже, в меню конкретного артиста
-    # Поэтому здесь больше нет никаких кнопок действий.
+    # --- НОВОЕ: Условное добавление кнопки "Назад" ---
+    if show_back_button:
+        # Используем существующий callback "back_to_profile", который уже обрабатывается в profile.py
+        builder.row(
+            InlineKeyboardButton(
+                text=lexicon.get('back_to_profile'), 
+                callback_data="back_to_profile"
+            )
+        )
+    # --- КОНЕЦ НОВОГО ---
     
     return builder.as_markup()
 

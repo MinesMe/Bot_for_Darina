@@ -88,7 +88,8 @@ async def show_events_for_new_favorites(callback: CallbackQuery, state: FSMConte
     """
     Ищет события и ДОБАВЛЯЕТ `last_shown_event_ids` в текущий state.
     """
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
     found_events = await db.get_future_events_for_artists(artist_ids)
     
     if not found_events:
@@ -131,7 +132,7 @@ async def menu_add_subscriptions(message: Message, state: FSMContext):
         await state.update_data(data_to_restore)
     user_id = message.from_user.id
     onboarding_done = await db.check_general_geo_onboarding_status(user_id)
-    user_lang = message.from_user.language_code
+    user_lang = await db.get_user_lang(message.from_user.id)
     lexicon = Lexicon(user_lang)
 
     if not onboarding_done:
@@ -167,7 +168,7 @@ async def start_subscription_add_flow(callback: CallbackQuery, state: FSMContext
     """Начало флоу добавления подписки."""
     user_id = callback.from_user.id
     onboarding_done = await db.check_general_geo_onboarding_status(user_id)
-    user_lang = callback.message.from_user.language_code
+    user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
     if not onboarding_done:
         await state.set_state(SubscriptionFlow.general_mobility_onboarding)
@@ -191,7 +192,8 @@ async def cq_cancel_add_process(callback: CallbackQuery, state: FSMContext):
     и возвращает пользователя в главное меню.
     """
     await state.clear()
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
 
     try:
         # Пытаемся удалить сообщение, к которому была привязана кнопка
@@ -216,7 +218,7 @@ async def cq_cancel_add_process(callback: CallbackQuery, state: FSMContext):
 async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора в онбординге общей мобильности."""
     await db.set_general_geo_onboarding_completed(callback.from_user.id)
-    user_lang = callback.message.from_user.language_code
+    user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
 
     if callback.data == 'setup_general_mobility':
@@ -248,7 +250,8 @@ async def cq_cancel_add_process(callback: CallbackQuery, state: FSMContext):
     print('here')
     """Отменяет процесс добавления и возвращает в главное меню."""
     await state.clear()
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
     await callback.message.delete()
     # Здесь можно либо показать главное меню, либо меню "Избранное"
     # Давайте вернем в главное меню, это универсальнее
@@ -265,7 +268,7 @@ async def handle_setup_general_mobility_again(callback: CallbackQuery, state: FS
     Этот хэндлер срабатывает, когда пользователь нажимает 'Настроить общую мобильность'
     уже после прохождения первого онбординга.
     """
-    user_lang = callback.message.from_user.language_code
+    user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
     await state.set_state(SubscriptionFlow.selecting_general_regions)
     await state.update_data(selected_regions=[])
@@ -284,7 +287,7 @@ async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContex
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
-    user_lang = callback.message.from_user.language_code
+    user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
     if region_name in selected:
         selected.remove(region_name)
@@ -305,7 +308,8 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
     """
     data = await state.get_data()
     pending_items = data.get('pending_favorites', [])
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
 
     if not pending_items:
         await callback.answer(lexicon.get('nothing_to_add_alert'), show_alert=True)
@@ -352,7 +356,8 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "write_artist")
 async def handle_write_artist(callback: CallbackQuery, state: FSMContext):
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
     await state.set_state(SubscriptionFlow.waiting_for_artist_name)
     await callback.message.edit_text(
         lexicon.get('enter_artist_name_prompt'),
@@ -362,7 +367,8 @@ async def handle_write_artist(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "import_artists")
 async def handle_import_artists(callback: CallbackQuery, state: FSMContext):
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
     # --- ИСПРАВЛЕНИЕ --- Замена текста
     await callback.answer(lexicon.get('import_in_development_alert'), show_alert=True)
 
@@ -371,7 +377,8 @@ async def process_artist_search(message: Message, state: FSMContext):
     """Поиск артиста по имени."""
     found_artists, is_exact_match = await db.find_artists_fuzzy(message.text)
     
-    lexicon = Lexicon(message.from_user.language_code)
+    user_lang = await db.get_user_lang(message.from_user.id)
+    lexicon = Lexicon(user_lang)
 
     if not found_artists:
         await message.answer(
@@ -394,7 +401,8 @@ async def process_artist_search(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("subscribe_to_artist:"))
 async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
     artist_id = int(callback.data.split(":", 1)[1])
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
     
     async with db.async_session() as session:
         artist = await session.get(db.Artist, artist_id)
@@ -481,6 +489,7 @@ async def cq_toggle_region_for_custom(callback: CallbackQuery, state: FSMContext
     data = await state.get_data()
     selected = data.get("selected_regions", [])
     user_lang = callback.message.from_user.language_code
+    user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
     if region_name in selected:
         selected.remove(region_name)
@@ -501,7 +510,8 @@ async def cq_finish_custom_selection(callback: CallbackQuery, state: FSMContext)
     regions = data.get("selected_regions", [])
     artist_name = data.get('current_artist')
     pending_subs = data.get('pending_favorites', [])
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
 
     if not regions:
         await callback.answer(lexicon.get('no_regions_selected_alert'), show_alert=True)
@@ -543,7 +553,8 @@ async def cq_finish_general_selection(callback: CallbackQuery, state: FSMContext
     """Завершение настройки общей мобильности."""
     data = await state.get_data()
     regions = data.get("selected_regions", [])
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
 
     # if not regions: # Можно раскомментировать, если нужно
     #     await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
@@ -630,7 +641,8 @@ async def cq_finish_recommendation_selection(callback: CallbackQuery, state: FSM
     selected_ids = data.get('current_selection_ids', [])
     message_to_edit_id = data.get('recommendation_message_id') # Используем правильный ID
     all_artists_data = data.get('recommended_artists', [])
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
 
     if not message_to_edit_id:
         await callback.answer("Session error, please try again.", show_alert=True)

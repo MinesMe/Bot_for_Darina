@@ -16,6 +16,7 @@ from aiogram.exceptions import TelegramBadRequest
 from ..lexicon import get_event_type_keys, get_event_type_storage_value
 from app.handlers.favorities import show_favorites_list
 from .search_cities import start_city_search, process_city_input, back_to_city_list
+from aiogram.filters import Command, or_f # Добавляем or_f
 
 router = Router()
 
@@ -47,7 +48,8 @@ async def show_profile_menu(callback_or_message: Message | CallbackQuery, state:
     data_to_restore = {k: v for k, v in data_to_keep.items() if v is not None}
     if data_to_restore:
         await state.update_data(data_to_restore)
-    lexicon = Lexicon(callback_or_message.from_user.language_code)
+    user_lang = await db.get_user_lang(callback_or_message.from_user.id)
+    lexicon = Lexicon(user_lang)
     text = lexicon.get('profile_menu_header')
     markup = kb.get_profile_keyboard(lexicon)
     if isinstance(callback_or_message, CallbackQuery):
@@ -106,7 +108,12 @@ async def cq_edit_country_selected(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(EditMainGeoFSM.choosing_city, F.data == "edit_search_for_city")
 async def cq_edit_search_for_city(callback: CallbackQuery, state: FSMContext):
     """Начинает поиск города в режиме редактирования."""
-    await start_city_search(callback, state, new_state=EditMainGeoFSM.waiting_city_input)
+    await start_city_search(
+        callback, 
+        state, 
+        new_state=EditMainGeoFSM.waiting_city_input,
+        back_callback="back_to_edit_city_list"
+    )
 
 
 @router.message(EditMainGeoFSM.waiting_city_input, F.text)
@@ -121,9 +128,11 @@ async def process_edit_city_search(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(EditMainGeoFSM.choosing_city, F.data == "back_to_edit_city_list")
+@router.callback_query(or_f(EditMainGeoFSM.choosing_city, EditMainGeoFSM.waiting_city_input), F.data == "back_to_edit_city_list")
 async def cq_back_to_edit_city_list(callback: CallbackQuery, state: FSMContext):
     """Возвращает к списку городов после неудачного поиска."""
+    await state.set_state(EditMainGeoFSM.choosing_city)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     await back_to_city_list(
         callback=callback,
         state=state,
@@ -275,7 +284,8 @@ async def show_subscriptions_list(callback_or_message: Message | CallbackQuery, 
     if data_to_restore:
         await state.update_data(data_to_restore)
     user_id = callback_or_message.from_user.id
-    lexicon = Lexicon(callback_or_message.from_user.language_code)
+    user_lang = await db.get_user_lang(callback_or_message.from_user.id)
+    lexicon = Lexicon(user_lang)
     
     subs = await db.get_user_subscriptions(user_id)
     
@@ -304,7 +314,7 @@ async def menu_show_subscriptions(message: Message, state: FSMContext):
 async def cq_manage_favorites(callback: CallbackQuery, state: FSMContext):
     """Точка входа в раздел 'Избранное' из меню профиля."""
     # Просто вызываем функцию, которая умеет показывать список избранных
-    await show_favorites_list(callback, state)
+    await show_favorites_list(callback, state, True)
 
     
 @router.callback_query(F.data == "back_to_subscriptions_list")

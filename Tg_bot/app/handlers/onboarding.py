@@ -14,6 +14,7 @@ from ..lexicon import Lexicon,get_event_type_keys, get_event_type_storage_value
 from aiogram.exceptions import TelegramBadRequest
 # from app.handlers.afisha import Afisha
 from .search_cities import start_city_search, process_city_input, back_to_city_list
+from aiogram.filters import StateFilter, or_f
 
 router = Router()
 
@@ -30,7 +31,8 @@ class Onboarding(StatesGroup):
 async def finish_onboarding(callback_or_message: Message | CallbackQuery, state: FSMContext, is_setting_complete):
     user_id = callback_or_message.from_user.id
     data = await state.get_data()
-    lexicon = Lexicon(callback_or_message.from_user.language_code)
+    user_lang = await db.get_user_lang(callback_or_message.from_user.id)
+    lexicon = Lexicon(user_lang)
 
     await db.update_user_preferences(
         user_id=user_id,
@@ -134,7 +136,12 @@ async def cq_select_home_city(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(Onboarding.choosing_home_city, F.data == "search_for_home_city")
 async def cq_search_for_city(callback: CallbackQuery, state: FSMContext):
     """Запускает поиск города в онбординге."""
-    await start_city_search(callback, state, new_state=Onboarding.waiting_for_city_search)
+    await start_city_search(
+        callback, 
+        state, 
+        new_state=Onboarding.waiting_for_city_search,
+        back_callback="back_to_city_selection"
+    )
 
 
 @router.message(Onboarding.waiting_for_city_search, F.text)
@@ -145,13 +152,21 @@ async def process_city_search(message: Message, state: FSMContext):
         state=state,
         country_key="home_country",
         return_state=Onboarding.choosing_home_city,
-        found_cities_kb=kb.get_found_home_cities_keyboard
+        found_cities_kb=kb.get_found_home_cities_keyboard,
+        back_callback="back_to_city_selection"
     )
 
 
-@router.callback_query(Onboarding.choosing_home_city, F.data == "back_to_city_selection")
+@router.callback_query(
+    or_f(Onboarding.choosing_home_city, Onboarding.waiting_for_city_search), 
+    F.data == "back_to_city_selection"
+)
 async def cq_back_to_city_selection(callback: CallbackQuery, state: FSMContext):
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
     """Возвращает пользователя к списку городов по умолчанию в онбординге."""
+    # --- ИЗМЕНЕНИЕ: Устанавливаем правильное состояние ПЕРЕД вызовом ---
+    await state.set_state(Onboarding.choosing_home_city)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     await back_to_city_list(
         callback=callback,
         state=state,

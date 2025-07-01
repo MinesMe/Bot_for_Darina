@@ -52,15 +52,15 @@ def get_edit_country_keyboard(countries: list, lexicon) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=lexicon.get('back_to_profile'), callback_data="back_to_profile"))
     return builder.as_markup()
 
-def get_edit_city_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup:
+def get_edit_city_keyboard(top_cities: list, lexicon, back_callback_data: str = "back_to_edit_country") -> InlineKeyboardMarkup:
     """Новая клавиатура для выбора города в профиле."""
     builder = InlineKeyboardBuilder()
     for city in top_cities:
         builder.button(text=city, callback_data=f"edit_city:{city}")
     builder.adjust(2)
-    # --- ДОБАВЛЕНА КНОПКА ПОИСКА С УНИКАЛЬНЫМ CALLBACK ---
     builder.row(InlineKeyboardButton(text=lexicon.get('find_another_city'), callback_data="edit_search_for_city"))
-    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_choose_country'), callback_data="back_to_edit_country"))
+    # Используем переданный callback для кнопки "Назад"
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_to_choose_country'), callback_data=back_callback_data))
     return builder.as_markup()
 
 def get_edit_event_type_keyboard(lexicon, selected_types: list = None) -> InlineKeyboardMarkup:

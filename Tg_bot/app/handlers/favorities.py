@@ -23,18 +23,19 @@ router = Router()
 
 # --- ХЕЛПЕРЫ ДЛЯ ПОКАЗА ЭКРАНОВ ---
 
-async def show_favorites_list(callback_or_message: Message | CallbackQuery, state: FSMContext):
+async def show_favorites_list(callback_or_message: Message | CallbackQuery, state: FSMContext, show_back_button: bool = False):
     """Отображает главный экран "Избранного" со списком артистов."""
     await state.set_state(FavoritesFSM.viewing_list)
     
     target_obj = callback_or_message.message if isinstance(callback_or_message, CallbackQuery) else callback_or_message
-    lexicon = Lexicon(callback_or_message.from_user.language_code)
+    user_lang = await db.get_user_lang(callback_or_message.from_user.id)
+    lexicon = Lexicon(user_lang)
     # --- ИЗМЕНЕНИЕ --- Удален отладочный print()
     favorites = await db.get_user_favorites(callback_or_message.from_user.id)
     
     
     text = lexicon.get('favorites_list_prompt') if favorites else lexicon.get('favorites_menu_header_empty')
-    markup = kb.get_favorites_list_keyboard(favorites, lexicon)
+    markup = kb.get_favorites_list_keyboard(favorites, lexicon,show_back_button)
     
     action = target_obj.edit_text if isinstance(callback_or_message, CallbackQuery) else target_obj.answer
     try:
