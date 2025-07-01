@@ -76,8 +76,7 @@ async def trigger_recommendation_flow(user_id: int, bot: Bot, state: FSMContext,
         await state.update_data(
             recommended_artists=recommended_artists_dicts,
             current_selection_ids=[],
-            message_id_to_edit=sent_message.message_id,
-            messages_to_delete_on_combined_finish=current_messages + [sent_message.message_id]
+            recommendation_message_id=sent_message.message_id # Новый ключ
         )
         logging.info(f"--> Данные для рекомендаций добавлены в state для {user_id}")
 
@@ -114,7 +113,7 @@ async def show_events_for_new_favorites(callback: CallbackQuery, state: FSMConte
     )
     # Добавляем их в state
     current_messages = (await state.get_data()).get('messages_to_delete_on_combined_finish', [])
-    await state.update_data(messages_to_delete_on_combined_finish=current_messages + sent_messages)
+    await state.update_data(event_messages_ids=sent_messages)
 
 @router.message(F.text.in_(['➕ Добавить в избранное', '➕ Add to Favorites', '➕ Знайсці/дадаць выканаўцу'])) 
 async def menu_add_subscriptions(message: Message, state: FSMContext):
@@ -334,8 +333,8 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
 
     # 2. Устанавливаем НОВОЕ гибридное состояние
     await state.set_state(CombinedFlow.active)
-    # Инициализируем пустое хранилище для этого состояния
-    await state.set_data({'messages_to_delete_on_combined_finish': []})
+    # --- ИЗМЕНЕНИЕ: Очищаем state полностью, так как ID будут добавляться в других функциях ---
+    await state.set_data({}) 
     logging.warning("--- DEBUG: УСТАНОВЛЕНО СОСТОЯНИЕ CombinedFlow.active ---")
     logging.warning(f"--- DEBUG: ДАННЫЕ В STATE: {await state.get_data()} ---")
 
@@ -629,61 +628,68 @@ async def cq_finish_recommendation_selection(callback: CallbackQuery, state: FSM
     """
     data = await state.get_data()
     selected_ids = data.get('current_selection_ids', [])
-    message_id_to_edit = data.get('message_id_to_edit')
+    message_to_edit_id = data.get('recommendation_message_id') # Используем правильный ID
     all_artists_data = data.get('recommended_artists', [])
-    
     lexicon = Lexicon(callback.from_user.language_code)
-    
-    # Сразу очищаем state, так как сессия выбора рекомендаций завершена
-    await state.update_data(
-        recommended_artists=None,
-        current_selection_ids=None,
-        message_id_to_edit=None
-    )
-    current_data = await state.get_data()
-    if not current_data.get('last_shown_event_ids'):
-        await state.clear()
-    await callback.answer()
 
-    # Сначала редактируем сообщение с рекомендациями
-    if not selected_ids:
-        # Если ничего не выбрано, просто пишем "Хорошо!"
-        await callback.bot.edit_message_text(
-                chat_id=callback.from_user.id,
-                message_id=message_id_to_edit,
-                text="Ok!",
-                reply_markup=None # Убираем клавиатуру
-            )
+    if not message_to_edit_id:
+        await callback.answer("Session error, please try again.", show_alert=True)
         return
-    else:
-        # Если выбраны, пишем "Добавлено N артистов"
-        final_text = lexicon.get('favorites_added_final').format(count=len(selected_ids))
 
-    try:
-        if message_id_to_edit:
-            await callback.bot.edit_message_text(
-                chat_id=callback.from_user.id,
-                message_id=message_id_to_edit,
-                text=final_text,
-                reply_markup=None # Убираем клавиатуру
-            )
-    except TelegramBadRequest: pass
+    # Если ничего не выбрано, просто удаляем блок с рекомендациями и выходим
+    if not selected_ids:
+        await callback.message.delete()
+        # Проверяем, остался ли первый блок событий. Если нет, очищаем state.
+        current_data = await state.get_data()
+        if not current_data.get('event_messages_ids'):
+            await state.clear()
+        await callback.answer("OK")
+        return
 
-    # 1. Сохраняем их в "Избранное"
+    # 1. Сохраняем выбранных артистов в БД
     general_mobility = await db.get_general_mobility(callback.from_user.id) or []
     async with db.async_session() as session:
         for artist_id in selected_ids:
             await db.add_artist_to_favorites(session, callback.from_user.id, artist_id, general_mobility)
         await session.commit()
     
-    # 2. Запускаем фоновую задачу для поиска их событий
-    selected_artist_names = [
-        artist['name'] for artist in all_artists_data 
-        if artist['artist_id'] in selected_ids
-    ]
+    # 2. Ищем события для новых артистов
+    selected_artist_names = [a['name'] for a in all_artists_data if a['artist_id'] in selected_ids]
+    found_events = await db.get_future_events_for_artists(selected_ids)
+    response_text, event_ids_to_subscribe = await format_events_by_artist(found_events, selected_artist_names, lexicon)
 
-    asyncio.create_task(
-        show_events_for_new_favorites(callback, state, selected_ids, selected_artist_names)
+    # 3. Готовим итоговое сообщение и клавиатуру
+    final_text = response_text if response_text else lexicon.get('no_future_events_for_favorites')
+    final_markup = kb.get_afisha_actions_keyboard(lexicon) if response_text else None
+
+    # 4. Редактируем сообщение с рекомендациями, заменяя его на список событий
+    try:
+        await callback.bot.edit_message_text(
+            chat_id=callback.from_user.id,
+            message_id=message_to_edit_id,
+            text=final_text,
+            reply_markup=final_markup,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"Не удалось отредактировать сообщение с рекомендациями: {e}")
+        # Если не удалось, просто удаляем его, чтобы не мешало
+        await callback.bot.delete_message(callback.from_user.id, message_to_edit_id)
+
+
+    # 5. Обновляем state: очищаем данные рекомендаций и добавляем данные о новых событиях
+    await state.update_data(
+        recommended_artists=None,
+        current_selection_ids=None,
+        recommendation_message_id=None,
+        last_shown_event_ids=event_ids_to_subscribe # Перезаписываем ID событий на новые
+    )
+    
+    # Отправляем alert об успехе
+    await callback.answer(
+        lexicon.get('favorites_added_final').format(count=len(selected_ids)),
+        show_alert=True
     )
 
 @router.message(SubscriptionFlow.waiting_for_action, F.text)

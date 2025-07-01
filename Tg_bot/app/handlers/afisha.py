@@ -1,7 +1,8 @@
 # app/handlers/afisha.py
 
+import asyncio
 import logging
-from aiogram import Router, F
+from aiogram import Bot, Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
@@ -485,9 +486,6 @@ async def process_event_numbers_for_combined_flow(message: Message, state: FSMCo
     """
     Обрабатывает номера событий ТОЛЬКО для комбинированного флоу.
     """
-    logging.warning("--- DEBUG: Сработал хэндлер process_event_numbers_for_combined_flow ---")
-    logging.warning(f"--- DEBUG: ТЕКУЩЕЕ СОСТОЯНИЕ: {await state.get_state()} ---")
-    logging.warning(f"--- DEBUG: ДАННЫЕ В STATE: {await state.get_data()} ---")
     bot = message.bot
     lexicon = Lexicon(message.from_user.language_code)
     data = await state.get_data()
@@ -495,10 +493,14 @@ async def process_event_numbers_for_combined_flow(message: Message, state: FSMCo
     last_shown_ids = data.get("last_shown_event_ids", [])
     prompt_message_id = data.get('prompt_message_id')
     callback_query_id = data.get('callback_query_id_for_alert')
-    messages_to_delete = data.get('messages_to_delete_on_combined_finish', [])
+    # --- ИЗМЕНЕНИЕ: Получаем ID только сообщений с событиями ---
+    event_messages_ids = data.get('event_messages_ids', [])
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
+    # ... (Логика парсинга и добавления в БД остается без изменений) ...
     added_count = 0
     try:
+        # ... (код парсинга)
         input_numbers = [int(num.strip()) for num in message.text.replace(',', ' ').split()]
         event_ids_to_add, invalid_numbers = [], []
         for num in input_numbers:
@@ -517,11 +519,19 @@ async def process_event_numbers_for_combined_flow(message: Message, state: FSMCo
         await message.reply(lexicon.get('subs_nan_error'))
         return
     
-    # Очищаем временные сообщения
+    # --- ИЗМЕНЕНИЕ: Собираем ID для удаления ---
+    all_ids_to_delete = event_messages_ids
     if prompt_message_id:
-        try: await bot.delete_message(message.chat.id, prompt_message_id)
-        except TelegramBadRequest: pass
-    await message.delete()
+        all_ids_to_delete.append(prompt_message_id)
+    all_ids_to_delete.append(message.message_id)
+
+    # Удаляем сообщения
+    for msg_id in set(all_ids_to_delete):
+        try:
+            await bot.delete_message(message.chat.id, msg_id)
+        except TelegramBadRequest:
+            pass
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     # Показываем alert
     if added_count > 0 and callback_query_id:
@@ -530,24 +540,27 @@ async def process_event_numbers_for_combined_flow(message: Message, state: FSMCo
         except TelegramBadRequest:
             pass
 
-    # Сбрасываем флаг, но остаемся в CombinedFlow
+    # --- ИЗМЕНЕНИЕ: Частичная очистка state ---
+    # Удаляем только те ключи, которые относятся к завершенному флоу подписки на события.
+    # Все, что связано с рекомендациями, остается.
     await state.update_data(
         sub_flow_active=False,
         prompt_message_id=None,
-        callback_query_id_for_alert=None
-    )
-
+        callback_query_id_for_alert=None,
+        last_shown_event_ids=None,
+        event_messages_ids=None
+    )   
 
 # --- ХЭНДЛЕР 4: ОБРАБОТКА ТЕКСТА ТОЛЬКО ДЛЯ АФИШИ И ИЗБРАННОГО ---
 @router.message(AddToSubsFSM.waiting_for_event_numbers, F.text)
-async def process_event_numbers(message: Message, state: FSMContext):
+async def process_event_numbers(message: Message, state: FSMContext, bot: Bot):
     """
     Обрабатывает номера событий для Афиши и Избранного.
     """
     from .favorities import show_single_favorite_menu
     logging.warning("--- DEBUG: Сработал хэндлер process_event_numbers (для Афиши/Избранного) ---")
     logging.warning(f"--- DEBUG: ТЕКУЩЕЕ СОСТОЯНИЕ: {await state.get_state()} ---")
-    bot = message.bot
+    # bot = message.bot
     lexicon = Lexicon(message.from_user.language_code)
     data = await state.get_data()
     
@@ -582,13 +595,28 @@ async def process_event_numbers(message: Message, state: FSMContext):
         except TelegramBadRequest: pass
     await message.delete()
 
-    if added_count > 0 and callback_query_id:
-        try:
-            await bot.answer_callback_query(callback_query_id=callback_query_id, text=lexicon.get('subs_added_success').format(count=added_count), show_alert=True)
-        except TelegramBadRequest:
-            await bot.send_message(message.chat.id, lexicon.get('subs_added_success').format(count=added_count))
-
     if return_to_artist_id and message_to_edit_id:
         await show_single_favorite_menu(chat_id=message.chat.id, message_id=message_to_edit_id, user_id=message.from_user.id, bot=bot, state=state)
     else:
         await state.clear()
+
+    # --- ИЗМЕНЕНИЕ: Заменяем alert на самоудаляющееся сообщение ---
+    if added_count > 0:
+        # Отправляем сообщение об успехе
+        success_message = await bot.send_message(
+            chat_id=message.chat.id,
+            text=lexicon.get('subs_added_success').format(count=added_count)
+        )
+        # Ждем 3 секунды
+        await asyncio.sleep(6)
+        # Удаляем сообщение об успехе
+        try:
+            await bot.delete_message(
+                chat_id=message.chat.id,
+                message_id=success_message.message_id
+            )
+        except TelegramBadRequest:
+            pass # Если пользователь успел удалить его сам
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+    
