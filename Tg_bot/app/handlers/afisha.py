@@ -448,23 +448,28 @@ async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
     """
     Начинает добавление в подписки для Афиши и Избранного, переходя в состояние AddToSubsFSM.
     """
-    logging.warning("--- DEBUG: Сработал хэндлер cq_add_to_subs_start (для Афиши/Избранного) ---")
-    logging.warning(f"--- DEBUG: ТЕКУЩЕЕ СОСТОЯНИЕ: {await state.get_state()} ---")
     data = await state.get_data()
     lexicon = Lexicon(callback.from_user.language_code)
     if not data.get("last_shown_event_ids"):
         await callback.answer(lexicon.get('afisha_must_find_events_first_alert'), show_alert=True)
         return
 
-    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+    # Определяем, в какое состояние FSM перейти
+    current_state_name = await state.get_state()
+    if 'CombinedFlow' not in str(current_state_name):
+        # Для Афиши и Избранного переходим в AddToSubsFSM
+        await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+    else:
+        # Для CombinedFlow остаемся в том же состоянии, но ставим флаг
+        await state.update_data(sub_flow_active=True)
+
+    # Сохраняем callback_id для будущего alert'а
     await state.update_data(callback_query_id_for_alert=callback.id)
 
-    if data.get('return_to_favorite_artist_id'):
-        prompt_message = await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
-        await state.update_data(prompt_message_id=prompt_message.message_id)
-    else:
-        await callback.message.edit_text(lexicon.get('subs_enter_numbers_prompt'), reply_markup=None)
-    
+    # ВСЕГДА отправляем новое сообщение, не редактируя старое
+    prompt_message = await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
+    await state.update_data(prompt_message_id=prompt_message.message_id)
+
     await callback.answer()
 
 
