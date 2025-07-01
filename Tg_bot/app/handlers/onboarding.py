@@ -13,6 +13,7 @@ from app import keyboards as kb
 from ..lexicon import Lexicon,get_event_type_keys, get_event_type_storage_value
 from aiogram.exceptions import TelegramBadRequest
 # from app.handlers.afisha import Afisha
+from .search_cities import start_city_search, process_city_input, back_to_city_list
 
 router = Router()
 
@@ -76,54 +77,6 @@ async def start_onboarding_process(message: Message | CallbackQuery, state: FSMC
     if isinstance(message, CallbackQuery):
         await message.answer()
 
-# async def toggle_event_type(callback: CallbackQuery, state: FSMContext):
-#     event_type = callback.data.split(":")[1]
-#     data = await state.get_data()
-#     selected = data.get("selected_event_types", [])
-
-#     if event_type in selected:
-#         selected.remove(event_type)
-#     else:
-#         selected.append(event_type)
-
-#     await state.update_data(selected_event_types=selected)
-#     lexicon = Lexicon(callback.from_user.language_code)
-#     await callback.message.edit_reply_markup(
-#         reply_markup=kb.get_event_type_selection_keyboard(lexicon, selected)
-#     )
-#     await callback.answer()
-
-
-async def search_for_city(callback: CallbackQuery, state: FSMContext, send_from):
-    await state.update_data(msg_id_to_edit=callback.message.message_id)
-    lexicon = Lexicon(callback.from_user.language_code)
-    await callback.message.edit_text(lexicon.get('search_city_prompt'))
-    await callback.answer()
-
-async def city_search(message: Message, state: FSMContext, send_from, country_name):
-    data = await state.get_data()
-    msg_id_to_edit = data.get("msg_id_to_edit")
-    lexicon = Lexicon(message.from_user.language_code)
-
-    await message.delete()
-    if not msg_id_to_edit: return
-
-    best_matches = await db.find_cities_fuzzy(country_name, message.text)
-
-    # await state.set_state(Onboarding.choosing_home_city)
-    if not best_matches:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg_id_to_edit,
-            text=lexicon.get('city_not_found'),
-            reply_markup=kb.get_back_to_city_selection_keyboard(lexicon)
-        )
-    else:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg_id_to_edit,
-            text=lexicon.get('city_found_prompt'),
-            reply_markup=kb.get_found_home_cities_keyboard(best_matches, lexicon)
-        )
-
 
 
 
@@ -180,53 +133,32 @@ async def cq_select_home_city(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(Onboarding.choosing_home_city, F.data == "search_for_home_city")
 async def cq_search_for_city(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(Onboarding.waiting_for_city_search)
-    await state.update_data(msg_id_to_edit=callback.message.message_id)
-    lexicon = Lexicon(callback.from_user.language_code)
-    await callback.message.edit_text(lexicon.get('search_city_prompt'))
-    await callback.answer()
+    """Запускает поиск города в онбординге."""
+    await start_city_search(callback, state, new_state=Onboarding.waiting_for_city_search)
 
 
 @router.message(Onboarding.waiting_for_city_search, F.text)
 async def process_city_search(message: Message, state: FSMContext):
-    data = await state.get_data()
-    country_name = data.get("home_country")
-    msg_id_to_edit = data.get("msg_id_to_edit")
-    lexicon = Lexicon(message.from_user.language_code)
-
-    await message.delete()
-    if not msg_id_to_edit: return
-
-    best_matches = await db.find_cities_fuzzy(country_name, message.text)
-    await state.set_state(Onboarding.choosing_home_city)
-
-    if not best_matches:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg_id_to_edit,
-            text=lexicon.get('city_not_found'),
-            reply_markup=kb.get_back_to_city_selection_keyboard(lexicon)
-        )
-    else:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg_id_to_edit,
-            text=lexicon.get('city_found_prompt'),
-            reply_markup=kb.get_found_home_cities_keyboard(best_matches, lexicon)
-        )
+    """Обрабатывает введенное пользователем название города для поиска в онбординге."""
+    await process_city_input(
+        message=message,
+        state=state,
+        country_key="home_country",
+        return_state=Onboarding.choosing_home_city,
+        found_cities_kb=kb.get_found_home_cities_keyboard
+    )
 
 
 @router.callback_query(Onboarding.choosing_home_city, F.data == "back_to_city_selection")
 async def cq_back_to_city_selection(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    country_name = data.get("home_country")
-    lexicon = Lexicon(callback.from_user.language_code)
-    top_cities = await db.get_top_cities_for_country(country_name)
-    text = lexicon.get('onboarding_back_to_city_prompt').format(country_name=hbold(country_name))
-    await callback.message.edit_text(
-        text,
-        reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
-        parse_mode=ParseMode.HTML
+    """Возвращает пользователя к списку городов по умолчанию в онбординге."""
+    await back_to_city_list(
+        callback=callback,
+        state=state,
+        country_key="home_country",
+        city_prompt_key='onboarding_back_to_city_prompt',
+        city_selection_kb=kb.get_home_city_selection_keyboard
     )
-    await callback.answer()
 
 @router.callback_query(Onboarding.choosing_event_types, F.data.startswith("toggle_event_type:"))
 async def cq_toggle_event_type(callback: CallbackQuery, state: FSMContext):

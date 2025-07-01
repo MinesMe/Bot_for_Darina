@@ -18,6 +18,7 @@ from app.utils.utils import format_events_with_headers, format_events_for_respon
 from aiogram.filters import or_f
 from app.handlers.states import AfishaFlowFSM,AddToSubsFSM,CombinedFlow
 from app.handlers.states import FavoritesFSM
+from .search_cities import start_city_search, process_city_input, back_to_city_list
 
 router = Router()
 
@@ -63,7 +64,8 @@ async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwa
             'parse_mode': kwargs.get('parse_mode'),
             'disable_web_page_preview': kwargs.get('disable_web_page_preview')
         }
-        await message.answer(part, **final_kwargs)
+        msg = await message.answer(part, **final_kwargs)
+        print(msg.message_id)
 
 async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -239,6 +241,36 @@ async def temp_city_selected(callback: CallbackQuery, state: FSMContext):
         reply_markup=kb.get_event_type_selection_keyboard(lexicon, []),
         parse_mode=ParseMode.HTML
     )
+
+@router.callback_query(AfishaFlowFSM.temp_choosing_city, F.data == "search_for_home_city")
+async def cq_afisha_search_for_city(callback: CallbackQuery, state: FSMContext):
+    """Запускает поиск города во временных настройках Афиши."""
+    await start_city_search(callback, state, new_state=AfishaFlowFSM.temp_waiting_city_input)
+
+
+@router.message(AfishaFlowFSM.temp_waiting_city_input, F.text)
+async def process_afisha_city_search(message: Message, state: FSMContext):
+    """Обрабатывает введенное пользователем название города для поиска."""
+    await process_city_input(
+        message=message,
+        state=state,
+        country_key="temp_country",
+        return_state=AfishaFlowFSM.temp_choosing_city,
+        found_cities_kb=kb.get_found_home_cities_keyboard
+    )
+
+
+@router.callback_query(AfishaFlowFSM.temp_choosing_city, F.data == "back_to_city_selection")
+async def cq_afisha_back_to_city_list(callback: CallbackQuery, state: FSMContext):
+    """Возвращает пользователя к списку городов по умолчанию после неудачного поиска."""
+    await back_to_city_list(
+        callback=callback,
+        state=state,
+        country_key="temp_country",
+        city_prompt_key='afisha_temp_select_city_prompt',
+        city_selection_kb=kb.get_home_city_selection_keyboard
+    )
+
 
 @router.callback_query(AfishaFlowFSM.temp_choosing_event_types, F.data.startswith("toggle_event_type:"))
 async def temp_toggle_type(callback: CallbackQuery, state: FSMContext): 

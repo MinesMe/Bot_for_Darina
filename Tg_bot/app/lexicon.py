@@ -240,6 +240,7 @@ class Lexicon:
                 'favorite_events_in_tracked_regions': '📍 В отслеживаемых регионах:',
                 'favorite_events_in_other_regions': '🌍 Также найдены в других регионах:',
                 'favorite_edit_regions_button':  "🌍 Изменить регионы для артиста",
+                'session_expired_alert': 'Эта сессия просмотра событий устарела. Пожалуйста, найдите события заново.',
 
                 
             },
@@ -428,6 +429,7 @@ class Lexicon:
                 'favorite_events_in_other_regions': '🌍 Also Found in Other Regions:',
                 'favorite_edit_regions_button': "🌍 Edit regions for this artist", # Исправил текст для логичности
                 'profile_button_favorites': "⭐ My Favorites",
+                'session_expired_alert': 'This event viewing session has expired. Please find the events again.',
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

@@ -15,6 +15,7 @@ from ..database.models import Event, Subscription # Импортируем мо�
 from aiogram.exceptions import TelegramBadRequest
 from ..lexicon import get_event_type_keys, get_event_type_storage_value
 from app.handlers.favorities import show_favorites_list
+from .search_cities import start_city_search, process_city_input, back_to_city_list
 
 router = Router()
 
@@ -97,66 +98,31 @@ async def cq_edit_country_selected(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(EditMainGeoFSM.choosing_city, F.data == "edit_search_for_city")
 async def cq_edit_search_for_city(callback: CallbackQuery, state: FSMContext):
     """Начинает поиск города в режиме редактирования."""
-    await state.set_state(EditMainGeoFSM.waiting_city_input)
-    await state.update_data(msg_id_to_edit=callback.message.message_id)
-    lexicon = Lexicon(callback.from_user.language_code)
-    await callback.message.edit_text(lexicon.get('search_city_prompt'))
-    await callback.answer()
+    await start_city_search(callback, state, new_state=EditMainGeoFSM.waiting_city_input)
+
 
 @router.message(EditMainGeoFSM.waiting_city_input, F.text)
 async def process_edit_city_search(message: Message, state: FSMContext):
     """Обрабатывает введенный текст для поиска города."""
-    data = await state.get_data()
-    country_name = data.get("home_country")
-    msg_id_to_edit = data.get("msg_id_to_edit")
-    lexicon = Lexicon(message.from_user.language_code)
-    await message.delete()
-    if not msg_id_to_edit: return
-    
-    best_matches = await db.find_cities_fuzzy(country_name, message.text)
-    await state.set_state(EditMainGeoFSM.choosing_city)
-    
-    if not best_matches:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg_id_to_edit,
-            text=lexicon.get('city_not_found'),
-            reply_markup=kb.get_back_to_city_selection_keyboard(lexicon)
-        )
-    else:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg_id_to_edit,
-            text=lexicon.get('city_found_prompt'),
-            reply_markup=kb.get_edit_found_cities_keyboard(best_matches, lexicon)
-        )
+    await process_city_input(
+        message=message,
+        state=state,
+        country_key="home_country",
+        return_state=EditMainGeoFSM.choosing_city,
+        found_cities_kb=kb.get_edit_found_cities_keyboard
+    )
+
 
 @router.callback_query(EditMainGeoFSM.choosing_city, F.data == "back_to_edit_city_list")
 async def cq_back_to_edit_city_list(callback: CallbackQuery, state: FSMContext):
     """Возвращает к списку городов после неудачного поиска."""
-    # Мы не можем вызывать cq_edit_country_selected, так как у нас нет callback.data с именем страны.
-    # Вместо этого мы должны сами получить страну из состояния FSM и сгенерировать меню.
-    
-    data = await state.get_data()
-    country_name = data.get("home_country")
-    lexicon = Lexicon(callback.from_user.language_code)
-    
-    if not country_name:
-        # Если в состоянии нет страны (маловероятно, но возможно), возвращаемся в профиль
-        await callback.answer(lexicon.get('generic_error_try_again'), show_alert=True)
-        await show_profile_menu(callback, state)
-        return
-
-    # Теперь мы делаем то же самое, что и cq_edit_country_selected, но с данными из state
-    await state.set_state(EditMainGeoFSM.choosing_city)
-    lexicon = Lexicon(callback.from_user.language_code)
-    top_cities = await db.get_top_cities_for_country(country_name)
-    text = lexicon.get('edit_geo_city_prompt').format(country_name=hbold(country_name))
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=kb.get_edit_city_keyboard(top_cities, lexicon),
-        parse_mode="HTML"
+    await back_to_city_list(
+        callback=callback,
+        state=state,
+        country_key="home_country",
+        city_prompt_key='edit_geo_city_prompt',
+        city_selection_kb=kb.get_edit_city_keyboard
     )
-    await callback.answer()
 
 @router.callback_query(EditMainGeoFSM.choosing_city, F.data.startswith("edit_city:"))
 async def cq_edit_city_selected(callback: CallbackQuery, state: FSMContext):
