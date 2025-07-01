@@ -71,10 +71,13 @@ async def trigger_recommendation_flow(user_id: int, bot: Bot, state: FSMContext,
             parse_mode=ParseMode.HTML,
         )
         
+        # Обновляем state, добавляя ID этого сообщения к списку на удаление
+        current_messages = (await state.get_data()).get('messages_to_delete_on_combined_finish', [])
         await state.update_data(
             recommended_artists=recommended_artists_dicts,
             current_selection_ids=[],
-            message_id_to_edit=sent_message.message_id
+            message_id_to_edit=sent_message.message_id,
+            messages_to_delete_on_combined_finish=current_messages + [sent_message.message_id]
         )
         logging.info(f"--> Данные для рекомендаций добавлены в state для {user_id}")
 
@@ -104,11 +107,14 @@ async def show_events_for_new_favorites(callback: CallbackQuery, state: FSMConte
     # НЕ устанавливаем state, а только обновляем данные
     await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
     
-    await send_long_message(
+    sent_messages = await send_long_message(
         message=callback.message, text=response_text, lexicon=lexicon,
         parse_mode=ParseMode.HTML, disable_web_page_preview=True,
         reply_markup=kb.get_afisha_actions_keyboard(lexicon)
     )
+    # Добавляем их в state
+    current_messages = (await state.get_data()).get('messages_to_delete_on_combined_finish', [])
+    await state.update_data(messages_to_delete_on_combined_finish=current_messages + sent_messages)
 
 @router.message(F.text.in_(['➕ Добавить в избранное', '➕ Add to Favorites', '➕ Знайсці/дадаць выканаўцу'])) 
 async def menu_add_subscriptions(message: Message, state: FSMContext):
@@ -329,7 +335,9 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
     # 2. Устанавливаем НОВОЕ гибридное состояние
     await state.set_state(CombinedFlow.active)
     # Инициализируем пустое хранилище для этого состояния
-    await state.set_data({}) 
+    await state.set_data({'messages_to_delete_on_combined_finish': []})
+    logging.warning("--- DEBUG: УСТАНОВЛЕНО СОСТОЯНИЕ CombinedFlow.active ---")
+    logging.warning(f"--- DEBUG: ДАННЫЕ В STATE: {await state.get_data()} ---")
 
     # 3. Редактируем сообщение, чтобы пользователь видел результат
     initial_feedback_text = lexicon.get('favorites_added_final').format(count=len(added_artist_names))

@@ -23,21 +23,6 @@ from aiogram.filters import StateFilter
 
 router = Router()
 
-# --- Новая, единая FSM для всего флоу "Афиши" ---
-# class AfishaFlowFSM(StatesGroup):
-#     choosing_date_period = State()
-#     choosing_month = State()
-#     choosing_filter_type = State()
-#     # Состояния для временной настройки
-#     temp_choosing_city = State()
-#     temp_waiting_city_input = State()
-#     temp_choosing_event_types = State()
-
-# # FSM для добавления в подписки
-# class AddToSubsFSM(StatesGroup):
-#     waiting_for_event_numbers = State()
-
-
 # --- Вспомогательная функция для отправки длинных сообщений ---
 async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwargs) -> list[int]:
     """
@@ -425,55 +410,45 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
         last_shown_event_ids=event_ids,
         messages_to_delete_on_expire=[header_message.message_id] + sent_messages_ids
     )
-
-# --- ПОИСК (остается без изменений, но можно будет добавить и ему выбор даты) ---
-# @router.message(F.text.in_(['🔎 Поиск', '🔎 Search', '🔎 Пошук'])) 
-# async def menu_search(message: Message, state: FSMContext): 
-#     await state.clear()
-#     await state.set_state(SearchGlobalFSM.waiting_for_query)
-#     lexicon = Lexicon(message.from_user.language_code)
-#     await message.answer(lexicon.get('search_prompt_enter_query_v2'))
-
-# @router.message(SearchGlobalFSM.waiting_for_query, F.text)
-# async def search_query_handler(message: Message, state: FSMContext): 
-#     user_id = message.from_user.id
-#     lexicon = Lexicon(message.from_user.language_code)
-    
-#     user_prefs = await db.get_user_preferences(user_id)
-#     search_regions = None
-#     if user_prefs and user_prefs.get("home_country") and user_prefs.get("home_city"):
-#         search_regions = [user_prefs["home_country"], user_prefs["home_city"]]
-
-#     await message.answer(
-#         lexicon.get('search_searching_for_query_v2').format(query_text=hbold(message.text)),
-#         parse_mode=ParseMode.HTML
-#     )
-
-#     found_events = await db.find_events_fuzzy(message.text, search_regions)
-#     response_text, event_ids = await format_events_for_response(found_events) 
-    
-#     if not found_events:
-#         await message.answer(lexicon.get('search_no_results_found_v2').format(query_text=hbold(message.text)))
-#         await state.clear()
-#     else:
-#         await state.update_data(last_shown_event_ids=event_ids)
-#         await message.answer(
-#             response_text, 
-#             disable_web_page_preview=True, 
-#             parse_mode=ParseMode.HTML,
-#             reply_markup=kb.get_afisha_actions_keyboard(lexicon)
-        # )
-
 # --- ДОБАВЛЕНИЕ В ПОДПИСКИ (остается без изменений) ---
-@router.callback_query(F.data == "add_events_to_subs",  or_f(
-        AfishaFlowFSM.choosing_filter_type,
-        # --- ДОБАВЛЯЕМ ЭТО СОСТОЯНИЕ ---
-        AfishaFlowFSM.temp_choosing_event_types,
-        # --------------------------------
-        CombinedFlow.active,
-        # FavoritesFSM.viewing_artist_events
-    ))
+
+@router.callback_query(CombinedFlow.active, F.data == "add_events_to_subs")
+async def cq_add_to_subs_from_combined_flow(callback: CallbackQuery, state: FSMContext):
+    """
+    Начинает добавление в подписки из комбинированного флоу.
+    Устанавливает флаг, что мы ждем номера.
+    """
+    logging.warning("--- DEBUG: Сработал хэндлер cq_add_to_subs_from_combined_flow ---")
+    logging.warning(f"--- DEBUG: ТЕКУЩЕЕ СОСТОЯНИЕ: {await state.get_state()} ---")
+    logging.warning(f"--- DEBUG: ДАННЫЕ В STATE: {await state.get_data()} ---")
+    data = await state.get_data()
+    lexicon = Lexicon(callback.from_user.language_code)
+    if not data.get("last_shown_event_ids"):
+        await callback.answer(lexicon.get('afisha_must_find_events_first_alert'), show_alert=True)
+        return
+
+    # Устанавливаем флаг, что мы ждем номера
+    await state.update_data(
+        sub_flow_active=True, 
+        callback_query_id_for_alert=callback.id
+    )
+    
+    prompt_message = await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
+    await state.update_data(prompt_message_id=prompt_message.message_id)
+    
+    await callback.answer()
+
+# --- ХЭНДЛЕР 2: ТОЛЬКО ДЛЯ АФИШИ И ИЗБРАННОГО ---
+@router.callback_query(
+    or_f(AfishaFlowFSM.choosing_filter_type, AfishaFlowFSM.temp_choosing_event_types, FavoritesFSM.viewing_artist_events),
+    F.data == "add_events_to_subs"
+)
 async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
+    """
+    Начинает добавление в подписки для Афиши и Избранного, переходя в состояние AddToSubsFSM.
+    """
+    logging.warning("--- DEBUG: Сработал хэндлер cq_add_to_subs_start (для Афиши/Избранного) ---")
+    logging.warning(f"--- DEBUG: ТЕКУЩЕЕ СОСТОЯНИЕ: {await state.get_state()} ---")
     data = await state.get_data()
     lexicon = Lexicon(callback.from_user.language_code)
     if not data.get("last_shown_event_ids"):
@@ -481,39 +456,97 @@ async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
-    # Здесь мы редактируем сообщение, так как в Афише это допустимо
-    await callback.message.edit_text(lexicon.get('subs_enter_numbers_prompt'), reply_markup=None)
+    await state.update_data(callback_query_id_for_alert=callback.id)
+
+    if data.get('return_to_favorite_artist_id'):
+        prompt_message = await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
+        await state.update_data(prompt_message_id=prompt_message.message_id)
+    else:
+        await callback.message.edit_text(lexicon.get('subs_enter_numbers_prompt'), reply_markup=None)
+    
     await callback.answer()
+
 
 @router.callback_query(F.data == "add_events_to_subs")
 async def cq_add_to_subs_expired_session(callback: CallbackQuery, state: FSMContext):
-    """
-    Этот хэндлер ловит все нажатия на кнопку "Добавить в подписки",
-    когда бот НЕ находится в ожидаемом состоянии (сессия устарела).
-    """
     lexicon = Lexicon(callback.from_user.language_code)
     await callback.answer(lexicon.get('session_expired_alert'), show_alert=True)
-    
-    data = await state.get_data()
-    message_ids_to_delete = data.get("messages_to_delete_on_expire", [])
-    print(message_ids_to_delete)
-    
-    if callback.message:
-        message_ids_to_delete.append(callback.message.message_id)
 
-    for msg_id in set(message_ids_to_delete):
+
+# --- ХЭНДЛЕРЫ ОБРАБОТКИ ТЕКСТА ---
+
+# --- ХЭНДЛЕР 3: ОБРАБОТКА ТЕКСТА ТОЛЬКО ДЛЯ COMBINED FLOW ---
+@router.message(
+    CombinedFlow.active, 
+    F.text,
+    lambda message: F.state_data.get('sub_flow_active')
+)
+async def process_event_numbers_for_combined_flow(message: Message, state: FSMContext):
+    """
+    Обрабатывает номера событий ТОЛЬКО для комбинированного флоу.
+    """
+    logging.warning("--- DEBUG: Сработал хэндлер process_event_numbers_for_combined_flow ---")
+    logging.warning(f"--- DEBUG: ТЕКУЩЕЕ СОСТОЯНИЕ: {await state.get_state()} ---")
+    logging.warning(f"--- DEBUG: ДАННЫЕ В STATE: {await state.get_data()} ---")
+    bot = message.bot
+    lexicon = Lexicon(message.from_user.language_code)
+    data = await state.get_data()
+    
+    last_shown_ids = data.get("last_shown_event_ids", [])
+    prompt_message_id = data.get('prompt_message_id')
+    callback_query_id = data.get('callback_query_id_for_alert')
+    messages_to_delete = data.get('messages_to_delete_on_combined_finish', [])
+
+    added_count = 0
+    try:
+        input_numbers = [int(num.strip()) for num in message.text.replace(',', ' ').split()]
+        event_ids_to_add, invalid_numbers = [], []
+        for num in input_numbers:
+            if 1 <= num <= len(last_shown_ids): event_ids_to_add.append(last_shown_ids[num-1])
+            else: invalid_numbers.append(str(num))
+        if invalid_numbers:
+            await message.reply(lexicon.get('subs_invalid_numbers_error').format(invalid_list=", ".join(invalid_numbers)))
+            return 
+        if event_ids_to_add:
+            await db.add_events_to_subscriptions_bulk(message.from_user.id, event_ids_to_add)
+            added_count = len(event_ids_to_add)
+        if not event_ids_to_add and not invalid_numbers: 
+            await message.reply(lexicon.get('subs_no_valid_numbers_provided'))
+            return
+    except ValueError:
+        await message.reply(lexicon.get('subs_nan_error'))
+        return
+    
+    # Очищаем временные сообщения
+    if prompt_message_id:
+        try: await bot.delete_message(message.chat.id, prompt_message_id)
+        except TelegramBadRequest: pass
+    await message.delete()
+
+    # Показываем alert
+    if added_count > 0 and callback_query_id:
         try:
-            await callback.bot.delete_message(chat_id=callback.from_user.id, message_id=msg_id)
+            await bot.answer_callback_query(callback_query_id=callback_query_id, text=lexicon.get('subs_added_success').format(count=added_count), show_alert=True)
         except TelegramBadRequest:
             pass
 
+    # Сбрасываем флаг, но остаемся в CombinedFlow
+    await state.update_data(
+        sub_flow_active=False,
+        prompt_message_id=None,
+        callback_query_id_for_alert=None
+    )
 
+
+# --- ХЭНДЛЕР 4: ОБРАБОТКА ТЕКСТА ТОЛЬКО ДЛЯ АФИШИ И ИЗБРАННОГО ---
 @router.message(AddToSubsFSM.waiting_for_event_numbers, F.text)
 async def process_event_numbers(message: Message, state: FSMContext):
-    # --- ИЗМЕНЕНИЕ: Переносим импорт в начало функции ---
+    """
+    Обрабатывает номера событий для Афиши и Избранного.
+    """
     from .favorities import show_single_favorite_menu
-    # --------------------------------------------------
-    
+    logging.warning("--- DEBUG: Сработал хэндлер process_event_numbers (для Афиши/Избранного) ---")
+    logging.warning(f"--- DEBUG: ТЕКУЩЕЕ СОСТОЯНИЕ: {await state.get_state()} ---")
     bot = message.bot
     lexicon = Lexicon(message.from_user.language_code)
     data = await state.get_data()
@@ -528,62 +561,34 @@ async def process_event_numbers(message: Message, state: FSMContext):
     try:
         input_numbers = [int(num.strip()) for num in message.text.replace(',', ' ').split()]
         event_ids_to_add, invalid_numbers = [], []
-        
         for num in input_numbers:
-            if 1 <= num <= len(last_shown_ids): 
-                event_ids_to_add.append(last_shown_ids[num - 1])
-            else: 
-                invalid_numbers.append(str(num))
-
-        if invalid_numbers: 
+            if 1 <= num <= len(last_shown_ids): event_ids_to_add.append(last_shown_ids[num-1])
+            else: invalid_numbers.append(str(num))
+        if invalid_numbers:
             await message.reply(lexicon.get('subs_invalid_numbers_error').format(invalid_list=", ".join(invalid_numbers)))
-            # --- ИЗМЕНЕНИЕ: Останавливаем выполнение, чтобы дать пользователю исправить ошибку ---
-            return 
-        
+            return
         if event_ids_to_add:
             await db.add_events_to_subscriptions_bulk(message.from_user.id, event_ids_to_add)
             added_count = len(event_ids_to_add)
-            
-        if not event_ids_to_add and not invalid_numbers: 
+        if not event_ids_to_add and not invalid_numbers:
             await message.reply(lexicon.get('subs_no_valid_numbers_provided'))
-            # --- ИЗМЕНЕНИЕ: Останавливаем выполнение ---
             return
-
     except ValueError:
         await message.reply(lexicon.get('subs_nan_error'))
-        # --- ИЗМЕНЕНИЕ: Останавливаем выполнение ---
         return
     
-    # Сначала очищаем временные сообщения
     if prompt_message_id:
-        try:
-            await bot.delete_message(message.chat.id, prompt_message_id)
+        try: await bot.delete_message(message.chat.id, prompt_message_id)
         except TelegramBadRequest: pass
     await message.delete()
 
-    # --- ИЗМЕНЕНИЕ: Добавляем недостающий блок уведомления ---
     if added_count > 0 and callback_query_id:
         try:
-            await bot.answer_callback_query(
-                callback_query_id=callback_query_id,
-                text=lexicon.get('subs_added_success').format(count=added_count),
-                show_alert=True
-            )
+            await bot.answer_callback_query(callback_query_id=callback_query_id, text=lexicon.get('subs_added_success').format(count=added_count), show_alert=True)
         except TelegramBadRequest:
-            # Если alert не сработал, отправляем обычное сообщение
             await bot.send_message(message.chat.id, lexicon.get('subs_added_success').format(count=added_count))
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-    # ЕСЛИ МЫ ПРИШЛИ ИЗ "ИЗБРАННОГО"
     if return_to_artist_id and message_to_edit_id:
-        await show_single_favorite_menu(
-            chat_id=message.chat.id,
-            message_id=message_to_edit_id,
-            user_id=message.from_user.id,
-            bot=bot,
-            state=state
-        )
-    # ЕСЛИ МЫ ПРИШЛИ ИЗ "АФИШИ" ИЛИ ДРУГОГО МЕСТА
+        await show_single_favorite_menu(chat_id=message.chat.id, message_id=message_to_edit_id, user_id=message.from_user.id, bot=bot, state=state)
     else:
         await state.clear()
-        
