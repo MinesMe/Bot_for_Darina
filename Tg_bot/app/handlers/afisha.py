@@ -19,6 +19,7 @@ from aiogram.filters import or_f
 from app.handlers.states import AfishaFlowFSM,AddToSubsFSM,CombinedFlow
 from app.handlers.states import FavoritesFSM
 from .search_cities import start_city_search, process_city_input, back_to_city_list
+from aiogram.filters import StateFilter
 
 router = Router()
 
@@ -102,7 +103,7 @@ async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
 
 
 # --- НОВАЯ ТОЧКА ВХОДА В АФИШУ ---
-@router.message(F.text.in_(['🗓 Афиша', '🗓 Events', '🗓 Афіша']))
+@router.message(F.text.in_(['🗓 Афиша', '🗓 Events', '🗓 Афіша']), StateFilter('*'))
 async def menu_afisha_start(message: Message, state: FSMContext):
     current_data = await state.get_data()
     data_to_keep = {

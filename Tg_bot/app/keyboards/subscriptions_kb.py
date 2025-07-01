@@ -29,6 +29,19 @@ def get_add_sub_action_keyboard(lexicon, show_setup_mobility_button: bool = Fals
         builder.row(InlineKeyboardButton(text=lexicon.get('general_mobility_settings'), callback_data="setup_general_mobility"))
     return builder.as_markup()
 
+def get_cancel_artist_input_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру с одной кнопкой "Отмена" для прерывания ввода имени артиста.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=lexicon.get('cancel_button'),
+            callback_data="cancel_add_to_fav" # Используем тот же callback, что и для отмены всего процесса
+        )
+    )
+    return builder.as_markup()
+
 def get_mobility_type_choice_keyboard(lexicon) -> InlineKeyboardMarkup:
     """
     Предлагает использовать общие настройки мобильности или настроить для текущей подписки.
@@ -65,6 +78,8 @@ def found_artists_keyboard(artists, lexicon) -> InlineKeyboardMarkup:
         builder.button(text=button_text, callback_data=f"subscribe_to_artist:{artist.artist_id}")
         
     builder.adjust(1)
-    # --- ИЗМЕНЕНИЕ --- Текст заменен на вызов lexicon.get()
-    builder.row(InlineKeyboardButton(text=lexicon.get('cancel_button'), callback_data="cancel_artist_search"))
+    # --- ИЗМЕНЕНИЕ ---
+    # Текст заменен на вызов lexicon.get(). Кнопка 'cancel_artist_search' теперь будет вести
+    # не на начало флоу, а на отмену, что логичнее.
+    builder.row(InlineKeyboardButton(text=lexicon.get('cancel_button'), callback_data="cancel_add_to_fav"))
     return builder.as_markup()

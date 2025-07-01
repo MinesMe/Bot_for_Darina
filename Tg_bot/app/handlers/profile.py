@@ -10,7 +10,7 @@ from aiogram.utils.markdown import hbold
 from ..database.requests import requests as db
 from app import keyboards as kb
 from ..lexicon import Lexicon
-from .subscriptions import SubscriptionFlow 
+from .states import SubscriptionFlow 
 from ..database.models import Event, Subscription # Импортируем модели для type hinting
 from aiogram.exceptions import TelegramBadRequest
 from ..lexicon import get_event_type_keys, get_event_type_storage_value

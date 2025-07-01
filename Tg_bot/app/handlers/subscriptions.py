@@ -14,6 +14,8 @@ from app import keyboards as kb
 from app.utils.utils import format_events_for_response
 from .favorities import show_favorites_list 
 from ..lexicon import Lexicon
+from aiogram.filters import Command
+from app.handlers.profile import menu_profile # Импортируем хэндлер профиля для вызоваs
 
 from aiogram.enums import ParseMode
 from app.utils.utils import format_events_by_artist # Наш новый форматер
@@ -177,18 +179,33 @@ async def start_subscription_add_flow(callback: CallbackQuery, state: FSMContext
         )
     await callback.answer()
 
-@router.callback_query(F.data == "cancel_artist_search")
-async def cq_cancel_artist_search(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionFlow.waiting_for_action)
-    
+@router.callback_query(F.data == "cancel_add_to_fav")
+async def cq_cancel_add_process(callback: CallbackQuery, state: FSMContext):
+    """
+    Отменяет текущий процесс, удаляет сообщение с инлайн-клавиатурой
+    и возвращает пользователя в главное меню.
+    """
+    await state.clear()
     lexicon = Lexicon(callback.from_user.language_code)
+
+    try:
+        # Пытаемся удалить сообщение, к которому была привязана кнопка
+        await callback.message.delete()
+        return
+    except TelegramBadRequest:
+        # Если сообщение уже было удалено или возникла другая ошибка,
+        # просто игнорируем ее.
+        pass
     
-    # Показываем то же сообщение и клавиатуру, что и в начале флоу
-    await callback.message.edit_text(
-        lexicon.get('action_prompt_default'),
-        reply_markup=kb.get_add_sub_action_keyboard(lexicon, show_setup_mobility_button=False)
+    # Отправляем новое сообщение с приветствием и главным меню
+    await callback.message.answer(
+        lexicon.get('main_menu_greeting').format(first_name=hbold(callback.from_user.first_name)),
+        reply_markup=kb.get_main_menu_keyboard(lexicon),
+        parse_mode="HTML"
     )
-    await callback.answer("Отменено.")
+    
+    # Отвечаем на callback, чтобы убрать "часики" на кнопке
+    await callback.answer(lexicon.get('cancel_alert'))
 
 @router.callback_query(SubscriptionFlow.general_mobility_onboarding, F.data.in_(['setup_general_mobility', 'skip_general_mobility']))
 async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMContext):
@@ -330,7 +347,10 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
 async def handle_write_artist(callback: CallbackQuery, state: FSMContext):
     lexicon = Lexicon(callback.from_user.language_code)
     await state.set_state(SubscriptionFlow.waiting_for_artist_name)
-    await callback.message.edit_text(lexicon.get('enter_artist_name_prompt'))
+    await callback.message.edit_text(
+        lexicon.get('enter_artist_name_prompt'),
+        reply_markup=kb.get_cancel_artist_input_keyboard(lexicon)
+    )
     await callback.answer()
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "import_artists")
@@ -347,7 +367,10 @@ async def process_artist_search(message: Message, state: FSMContext):
     lexicon = Lexicon(message.from_user.language_code)
 
     if not found_artists:
-        await message.answer(lexicon.get('favorites_not_found_try_again'))
+        await message.answer(
+            lexicon.get('favorites_not_found_try_again'),
+            reply_markup=kb.get_cancel_artist_input_keyboard(lexicon)
+        )
     else:
         # --- ИЗМЕНЕНИЕ: Выбираем текст в зависимости от флага ---
         if is_exact_match:
