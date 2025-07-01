@@ -1,26 +1,25 @@
 # app/handlers/favorites.py
 
-from aiogram import Router, F
+
+import logging
+from aiogram import Bot, Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.markdown import hbold
-
-from ..database.requests import requests as db
-from app import keyboards as kb
-from ..lexicon import Lexicon
-from ..database.models import Artist
 from aiogram.enums import ParseMode
 from aiogram.filters import or_f
 from aiogram.exceptions import TelegramBadRequest
 
-
+# --- ИЗМЕНЕНИЕ: Убираем лишние импорты и добавляем нужные ---
+from ..database.requests import requests as db
+from app import keyboards as kb
+from ..lexicon import Lexicon
+from ..database.models import Artist
 from app.utils.utils import format_events_by_artist_with_region_split
-from app.handlers.afisha import send_long_message, AddToSubsFSM
+from app.handlers.states import FavoritesFSM, AddToSubsFSM
 
 router = Router()
 
-from app.handlers.states import FavoritesFSM
 
 # --- ХЕЛПЕРЫ ДЛЯ ПОКАЗА ЭКРАНОВ ---
 
@@ -46,24 +45,25 @@ async def show_favorites_list(callback_or_message: Message | CallbackQuery, stat
     if isinstance(callback_or_message, CallbackQuery):
         await callback_or_message.answer()
 
-async def show_single_favorite_menu(callback: CallbackQuery, state: FSMContext):
+async def show_single_favorite_menu(chat_id: int, message_id: int, user_id: int, bot: Bot, state: FSMContext):
     """Показывает меню управления для ОДНОГО артиста, ID которого берется из FSM."""
     data = await state.get_data()
     artist_id = data.get("current_artist_id")
-    lexicon = Lexicon(callback.from_user.language_code) # --- ИЗМЕНЕНИЕ --- Lexicon определен в начале
+    user_lang = await db.get_user_lang(user_id) or 'en'
+    lexicon = Lexicon(user_lang)
+
     if not artist_id:
-        # --- ИЗМЕНЕНИЕ --- Текст заменен на вызов lexicon.get()
-        await callback.answer(lexicon.get('favorite_artist_find_error_alert'), show_alert=True)
-        await show_favorites_list(callback, state)
+        # Здесь мы не можем показать список, так как у нас нет callback'а
+        # Просто логируем ошибку
+        logging.error(f"Артист не найден в state для user_id={user_id}")
         return
 
     async with db.async_session() as session:
         artist = await session.get(Artist, artist_id)
     
     if not artist:
-        # --- ИЗМЕНЕНИЕ --- Текст заменен на вызов lexicon.get()
-        await callback.answer(lexicon.get('artist_not_in_db_alert'), show_alert=True)
-        await show_favorites_list(callback, state)
+        # Аналогично, просто логируем
+        logging.error(f"Артист {artist_id} не найден в БД для user_id={user_id}")
         return
 
     await state.set_state(FavoritesFSM.viewing_artist)
@@ -71,8 +71,17 @@ async def show_single_favorite_menu(callback: CallbackQuery, state: FSMContext):
     text = lexicon.get('favorite_artist_menu_prompt').format(artist_name=hbold(artist.name))
     markup = kb.get_single_favorite_manage_keyboard(artist_id, lexicon)
     
-    await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
-    await callback.answer()
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+    except TelegramBadRequest:
+        # Если не удалось отредактировать, это уже не критично в данном флоу
+        logging.warning(f"Не удалось отредактировать сообщение {message_id} для показа меню артиста.")
 
 
 # --- ХЭНДЛЕРЫ ---
@@ -84,11 +93,18 @@ async def show_single_favorite_menu(callback: CallbackQuery, state: FSMContext):
 #     await show_favorites_list(message, state)
 
 @router.callback_query(FavoritesFSM.viewing_list, F.data.startswith("view_favorite:"))
-async def cq_view_favorite_artist(callback: CallbackQuery, state: FSMContext):
+async def cq_view_favorite_artist(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """Переход из общего списка в меню конкретного артиста."""
     artist_id = int(callback.data.split(":")[1])
     await state.update_data(current_artist_id=artist_id)
-    await show_single_favorite_menu(callback, state)
+    # Вызываем обновленный хелпер
+    await show_single_favorite_menu(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        user_id=callback.from_user.id,
+        bot=bot,
+        state=state
+    )
 
 
 @router.callback_query(FavoritesFSM.viewing_artist, F.data.startswith("view_events_for_favorite:"))
@@ -99,6 +115,13 @@ async def cq_view_events_for_favorite(callback: CallbackQuery, state: FSMContext
     """
     lexicon = Lexicon(callback.from_user.language_code)
     artist_id = int(callback.data.split(":")[1])
+    
+    # Сохраняем ID артиста и ID сообщения для редактирования
+    await state.update_data(
+        current_artist_id=artist_id,
+        return_to_favorite_artist_id=artist_id,
+        message_to_edit_id=callback.message.message_id
+    )
     user_id = callback.from_user.id
     
     all_future_events = await db.get_future_events_for_artists([artist_id])
@@ -153,14 +176,53 @@ async def cq_view_events_for_favorite(callback: CallbackQuery, state: FSMContext
     
     await callback.answer()
 
-@router.callback_query(FavoritesFSM.viewing_artist_events, F.data == "back_to_single_favorite_view")
-async def cq_back_to_single_favorite_from_events(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(FavoritesFSM.viewing_artist_events, F.data == "add_events_to_subs")
+async def cq_add_to_subs_from_favorites(callback: CallbackQuery, state: FSMContext):
     """
-    Возвращает пользователя из просмотра событий обратно в меню управления артистом.
+    Начинает процесс добавления в подписки ИЗ ИЗБРАННОГО.
+    Сохраняет callback_id для alert'а и отправляет новое сообщение.
     """
-    # Удаляем сообщения со списком событий, чтобы не засорять чат
-    await state.update_data(last_shown_event_ids=None)
-    await show_single_favorite_menu(callback, state)
+    data = await state.get_data()
+    lexicon = Lexicon(callback.from_user.language_code)
+    if not data.get("last_shown_event_ids"):
+        await callback.answer(lexicon.get('afisha_must_find_events_first_alert'), show_alert=True)
+        return
+
+    await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
+    
+    prompt_message = await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
+    
+    # Сохраняем ID callback'а и нового сообщения
+    await state.update_data(
+        prompt_message_id=prompt_message.message_id,
+        callback_query_id_for_alert=callback.id
+    )
+    await callback.answer()
+
+@router.callback_query(or_f(FavoritesFSM.viewing_artist_events, AddToSubsFSM.waiting_for_event_numbers), F.data == "back_to_single_favorite_view")
+async def cq_back_to_single_favorite_from_events(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """
+    Возвращает пользователя из просмотра/добавления событий обратно в меню управления артистом.
+    """
+    # ... (логика удаления временных сообщений) ...
+    data = await state.get_data()
+    prompt_message_id = data.get('prompt_message_id')
+    if prompt_message_id:
+        try:
+            await bot.delete_message(callback.from_user.id, prompt_message_id)
+        except TelegramBadRequest:
+            pass
+
+    await state.update_data(last_shown_event_ids=None, prompt_message_id=None, callback_query_id_for_alert=None)
+    
+    # Вызываем обновленный хелпер
+    await show_single_favorite_menu(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        user_id=callback.from_user.id,
+        bot=bot,
+        state=state
+    )
 
 @router.callback_query(F.data == "back_to_favorites_list")
 async def cq_back_to_favorites_list(callback: CallbackQuery, state: FSMContext):

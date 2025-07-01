@@ -19,7 +19,9 @@ main_router = Router()
 
 main_router.include_router(common_router)
 main_router.include_router(onboarding_router)
-main_router.include_router(afisha_router)
 main_router.include_router(profile_router)
-main_router.include_router(favorites_router)
+# favorites_router должен идти ПЕРЕД afisha_router
+main_router.include_router(favorites_router) 
 main_router.include_router(subscriptions_router)
+# afisha_router теперь идет позже
+main_router.include_router(afisha_router)

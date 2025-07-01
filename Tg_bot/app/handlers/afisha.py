@@ -471,7 +471,7 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
         AfishaFlowFSM.temp_choosing_event_types,
         # --------------------------------
         CombinedFlow.active,
-        FavoritesFSM.viewing_artist_events
+        # FavoritesFSM.viewing_artist_events
     ))
 async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -481,7 +481,8 @@ async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
-    await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
+    # Здесь мы редактируем сообщение, так как в Афише это допустимо
+    await callback.message.edit_text(lexicon.get('subs_enter_numbers_prompt'), reply_markup=None)
     await callback.answer()
 
 @router.callback_query(F.data == "add_events_to_subs")
@@ -509,42 +510,80 @@ async def cq_add_to_subs_expired_session(callback: CallbackQuery, state: FSMCont
 
 @router.message(AddToSubsFSM.waiting_for_event_numbers, F.text)
 async def process_event_numbers(message: Message, state: FSMContext):
+    # --- ИЗМЕНЕНИЕ: Переносим импорт в начало функции ---
+    from .favorities import show_single_favorite_menu
+    # --------------------------------------------------
+    
+    bot = message.bot
     lexicon = Lexicon(message.from_user.language_code)
     data = await state.get_data()
+    
     last_shown_ids = data.get("last_shown_event_ids", [])
+    return_to_artist_id = data.get('return_to_favorite_artist_id')
+    message_to_edit_id = data.get('message_to_edit_id')
+    prompt_message_id = data.get('prompt_message_id')
+    callback_query_id = data.get('callback_query_id_for_alert')
 
+    added_count = 0
     try:
         input_numbers = [int(num.strip()) for num in message.text.replace(',', ' ').split()]
         event_ids_to_add, invalid_numbers = [], []
         
         for num in input_numbers:
-            if 1 <= num <= len(last_shown_ids):
+            if 1 <= num <= len(last_shown_ids): 
                 event_ids_to_add.append(last_shown_ids[num - 1])
-            else:
+            else: 
                 invalid_numbers.append(str(num))
 
-        if invalid_numbers:
+        if invalid_numbers: 
             await message.reply(lexicon.get('subs_invalid_numbers_error').format(invalid_list=", ".join(invalid_numbers)))
+            # --- ИЗМЕНЕНИЕ: Останавливаем выполнение, чтобы дать пользователю исправить ошибку ---
+            return 
         
         if event_ids_to_add:
             await db.add_events_to_subscriptions_bulk(message.from_user.id, event_ids_to_add)
-            await message.reply(lexicon.get('subs_added_success').format(count=len(event_ids_to_add)))
-        
-        if not event_ids_to_add and not invalid_numbers:
+            added_count = len(event_ids_to_add)
+            
+        if not event_ids_to_add and not invalid_numbers: 
             await message.reply(lexicon.get('subs_no_valid_numbers_provided'))
+            # --- ИЗМЕНЕНИЕ: Останавливаем выполнение ---
+            return
 
     except ValueError:
         await message.reply(lexicon.get('subs_nan_error'))
+        # --- ИЗМЕНЕНИЕ: Останавливаем выполнение ---
+        return
     
-    await state.update_data(last_shown_event_ids=None)
-    
-    # 2. Проверяем, остались ли данные от флоу рекомендаций
-    current_data = await state.get_data()
-    if current_data.get('recommended_artists'):
-        # ДАННЫЕ ОСТАЛИСЬ! Возвращаем пользователя в гибридное состояние.
-        await state.set_state(CombinedFlow.active)
-        logging.info(f"Пользователь {message.from_user.id} завершил подписку и возвращен в CombinedFlow.active")
+    # Сначала очищаем временные сообщения
+    if prompt_message_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_message_id)
+        except TelegramBadRequest: pass
+    await message.delete()
+
+    # --- ИЗМЕНЕНИЕ: Добавляем недостающий блок уведомления ---
+    if added_count > 0 and callback_query_id:
+        try:
+            await bot.answer_callback_query(
+                callback_query_id=callback_query_id,
+                text=lexicon.get('subs_added_success').format(count=added_count),
+                show_alert=True
+            )
+        except TelegramBadRequest:
+            # Если alert не сработал, отправляем обычное сообщение
+            await bot.send_message(message.chat.id, lexicon.get('subs_added_success').format(count=added_count))
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+    # ЕСЛИ МЫ ПРИШЛИ ИЗ "ИЗБРАННОГО"
+    if return_to_artist_id and message_to_edit_id:
+        await show_single_favorite_menu(
+            chat_id=message.chat.id,
+            message_id=message_to_edit_id,
+            user_id=message.from_user.id,
+            bot=bot,
+            state=state
+        )
+    # ЕСЛИ МЫ ПРИШЛИ ИЗ "АФИШИ" ИЛИ ДРУГОГО МЕСТА
     else:
-        # Данных не осталось, значит, пользователь закончил все дела. Очищаем state.
         await state.clear()
-        logging.info(f"Пользователь {message.from_user.id} завершил все потоки. State очищен.")
+        
