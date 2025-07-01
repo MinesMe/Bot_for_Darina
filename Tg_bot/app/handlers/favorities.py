@@ -228,7 +228,7 @@ async def cq_back_to_single_favorite_from_events(callback: CallbackQuery, state:
 @router.callback_query(F.data == "back_to_favorites_list")
 async def cq_back_to_favorites_list(callback: CallbackQuery, state: FSMContext):
     """Возврат из меню артиста в общий список."""
-    await show_favorites_list(callback, state)
+    await show_favorites_list(callback, state, True)
 
 @router.callback_query(
     or_f(FavoritesFSM.viewing_artist, FavoritesFSM.viewing_artist_events), 

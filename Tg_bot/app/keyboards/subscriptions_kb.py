@@ -16,17 +16,26 @@ def get_general_onboarding_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
-def get_add_sub_action_keyboard(lexicon, show_setup_mobility_button: bool = False ) -> InlineKeyboardMarkup:
+def get_artist_input_keyboard(lexicon, show_setup_mobility_button: bool = False) -> InlineKeyboardMarkup:
     """
-    Предлагает выбор: написать имя артиста вручную или импортировать.
-    Может также включать кнопку настройки общей мобильности.
+    Создает клавиатуру для экрана ввода имени артиста.
+    Включает кнопки "Импорт", "Настроить мобильность" (опционально) и "Отмена".
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text=lexicon.get('write_artist'), callback_data="write_artist")
+    
+    # Кнопка "Импортировать"
     builder.button(text=lexicon.get('import_artists'), callback_data="import_artists")
-    builder.adjust(1)
+    
+    # Опциональная кнопка "Настроить общую мобильность"
     if show_setup_mobility_button:
-        builder.row(InlineKeyboardButton(text=lexicon.get('general_mobility_settings'), callback_data="setup_general_mobility"))
+        builder.button(text=lexicon.get('general_mobility_settings'), callback_data="setup_general_mobility")
+    
+    # Кнопка "Отмена"
+    builder.button(text=lexicon.get('cancel_button'), callback_data="cancel_add_to_fav")
+    
+    # Каждая кнопка в своем ряду
+    builder.adjust(1)
+    
     return builder.as_markup()
 
 def get_cancel_artist_input_keyboard(lexicon) -> InlineKeyboardMarkup:

@@ -319,6 +319,7 @@ async def cq_manage_favorites(callback: CallbackQuery, state: FSMContext):
     
 @router.callback_query(F.data == "back_to_subscriptions_list")
 async def cq_back_to_subscriptions_list(callback: CallbackQuery, state: FSMContext):
+    print('a')
     await show_subscriptions_list(callback, state)
 
 @router.callback_query(F.data.startswith("view_subscription:"))
@@ -338,6 +339,7 @@ async def cq_view_subscription(callback: CallbackQuery, state: FSMContext):
         event_details = await session.get(Event, event_id)
 
     if not sub_details or not event_details:
+        print('b')
         await callback.answer(lexicon.get('sub_or_event_not_found_error'), show_alert=True)
         await show_subscriptions_list(callback, state)
         return

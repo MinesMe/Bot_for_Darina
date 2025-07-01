@@ -136,32 +136,25 @@ async def menu_add_subscriptions(message: Message, state: FSMContext):
     lexicon = Lexicon(user_lang)
 
     if not onboarding_done:
-        # Случай 1: Пользователь здесь в самый первый раз.
+        # Если нет - отправляем на онбординг мобильности
         await state.set_state(SubscriptionFlow.general_mobility_onboarding)
         await message.answer(
             lexicon.get('onboarding_mobility_prompt'),
             reply_markup=kb.get_general_onboarding_keyboard(lexicon)
         )
-    else:
-        # Пользователь уже проходил онбординг.
-        general_mobility_regions = await db.get_general_mobility(user_id)
-        await state.set_state(SubscriptionFlow.waiting_for_action)
-        await state.update_data(pending_favorites=[])
+        return
+    await state.set_state(SubscriptionFlow.waiting_for_artist_name)
+    await state.update_data(pending_favorites=[]) # Инициализируем очередь
 
-        if not general_mobility_regions:
-            # Случай 2: Онбординг пройден, но мобильность не настроена (пропущена).
-            # Показываем дополнительную кнопку.
-            await message.answer(
-                lexicon.get('action_prompt_with_mobility_setup'),
-                reply_markup=kb.get_add_sub_action_keyboard(lexicon, show_setup_mobility_button=True)
-            )
-        else:
-            # Случай 3: Все настроено.
-            # Стандартный флоу без лишних кнопок.
-            await message.answer(
-                lexicon.get('action_prompt_default'),
-                reply_markup=kb.get_add_sub_action_keyboard(lexicon, show_setup_mobility_button=False)
-            )
+    # Проверяем, нужно ли показывать кнопку настройки мобильности
+    general_mobility_regions = await db.get_general_mobility(user_id)
+    show_setup_button = not bool(general_mobility_regions)
+
+    # Отправляем новое стартовое сообщение
+    await message.answer(
+        lexicon.get('enter_artist_name_prompt'), # Используем новый текст
+        reply_markup=kb.get_artist_input_keyboard(lexicon, show_setup_mobility_button=show_setup_button)
+    )
 
 @router.callback_query(F.data == "add_new_subscription")
 async def start_subscription_add_flow(callback: CallbackQuery, state: FSMContext):
@@ -354,22 +347,11 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
     
     await callback.answer()
 
-@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "write_artist")
-async def handle_write_artist(callback: CallbackQuery, state: FSMContext):
-    user_lang = await db.get_user_lang(callback.from_user.id)
-    lexicon = Lexicon(user_lang)
-    await state.set_state(SubscriptionFlow.waiting_for_artist_name)
-    await callback.message.edit_text(
-        lexicon.get('enter_artist_name_prompt'),
-        reply_markup=kb.get_cancel_artist_input_keyboard(lexicon)
-    )
-    await callback.answer()
 
 @router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "import_artists")
 async def handle_import_artists(callback: CallbackQuery, state: FSMContext):
     user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
-    # --- ИСПРАВЛЕНИЕ --- Замена текста
     await callback.answer(lexicon.get('import_in_development_alert'), show_alert=True)
 
 @router.message(SubscriptionFlow.waiting_for_artist_name, F.text)
