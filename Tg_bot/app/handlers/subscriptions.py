@@ -110,7 +110,7 @@ async def show_events_for_new_favorites(callback: CallbackQuery, state: FSMConte
         reply_markup=kb.get_afisha_actions_keyboard(lexicon)
     )
 
-@router.message(F.text.in_(['➕ Найти/добавить артиста', '➕ Find/Add Artist', '➕ Знайсці/дадаць выканаўцу'])) 
+@router.message(F.text.in_(['➕ Добавить в избранное', '➕ Add to Favorites', '➕ Знайсці/дадаць выканаўцу'])) 
 async def menu_add_subscriptions(message: Message, state: FSMContext):
     """
     Точка входа в флоу ДОБАВЛЕНИЯ подписки.
