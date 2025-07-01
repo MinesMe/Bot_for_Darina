@@ -11,6 +11,8 @@ from app import keyboards as kb
 from ..lexicon import Lexicon
 from ..database.models import Artist
 from aiogram.enums import ParseMode
+from aiogram.filters import or_f
+from aiogram.exceptions import TelegramBadRequest
 
 
 from app.utils.utils import format_events_by_artist_with_region_split
@@ -88,6 +90,7 @@ async def cq_view_favorite_artist(callback: CallbackQuery, state: FSMContext):
     await state.update_data(current_artist_id=artist_id)
     await show_single_favorite_menu(callback, state)
 
+
 @router.callback_query(FavoritesFSM.viewing_artist, F.data.startswith("view_events_for_favorite:"))
 async def cq_view_events_for_favorite(callback: CallbackQuery, state: FSMContext):
     """
@@ -98,61 +101,82 @@ async def cq_view_events_for_favorite(callback: CallbackQuery, state: FSMContext
     artist_id = int(callback.data.split(":")[1])
     user_id = callback.from_user.id
     
-    # 1. Получаем все будущие события для артиста
     all_future_events = await db.get_future_events_for_artists([artist_id])
-
-    if not all_future_events:
-        await callback.answer("Для этого артиста пока нет предстоящих событий.", show_alert=True)
-        return
-
-    # 2. Получаем детали избранного, чтобы знать отслеживаемые регионы
     favorite_details = await db.get_favorite_details(user_id, artist_id)
     tracked_regions = favorite_details.regions if favorite_details else []
     
-    # 3. Получаем имя артиста из state для заголовка
     data = await state.get_data()
     artist_name = data.get("artist_name", lexicon.get('unknown_artist'))
 
-    # 4. Форматируем сообщение с разделением на регионы
     response_text, event_ids_to_subscribe = await format_events_by_artist_with_region_split(
         events=all_future_events,
         tracked_regions=tracked_regions,
         lexicon=lexicon
     )
     
-    # 5. Устанавливаем новое состояние и сохраняем ID для подписки
     await state.set_state(FavoritesFSM.viewing_artist_events)
-    await state.update_data(last_shown_event_ids=event_ids_to_subscribe)
+    await state.update_data(last_shown_event_ids=event_ids_to_subscribe or None)
     
-    # 6. Отправляем сообщение
     header_text = lexicon.get('favorite_events_header').format(artist_name=hbold(artist_name))
-    header_message = await callback.message.answer(header_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    final_text_parts = [header_text]
     
-    sent_messages_ids = await send_long_message(
-        message=callback.message,
-        text=response_text,
-        lexicon=lexicon,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-        reply_markup=kb.get_afisha_actions_keyboard(lexicon)
-    )
+    actions_keyboard = kb.get_afisha_actions_keyboard(lexicon, show_back_button=True)
 
-    # Правильно сохраняем
-    await state.update_data(
-        last_shown_event_ids=event_ids_to_subscribe,
-        messages_to_delete_on_expire=[header_message.message_id] + sent_messages_ids
-    )
+    if response_text:
+        final_text_parts.append(response_text)
+    else:
+        final_text_parts.append(lexicon.get('no_future_events_for_favorites'))
+
+    final_text = "\n\n".join(final_text_parts)
+
+    try:
+        # Пытаемся отредактировать текущее сообщение
+        await callback.message.edit_text(
+            final_text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            reply_markup=actions_keyboard
+        )
+    except TelegramBadRequest as e:
+        if "message is too long" in str(e):
+            # Если текст слишком длинный, редактируем только заголовок и отправляем тело отдельно
+            await callback.message.edit_text(header_text)
+            await callback.message.answer(
+                response_text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=actions_keyboard
+            )
+        else:
+            # Другие ошибки (например, message not modified) просто игнорируем
+            pass
     
     await callback.answer()
+
+@router.callback_query(FavoritesFSM.viewing_artist_events, F.data == "back_to_single_favorite_view")
+async def cq_back_to_single_favorite_from_events(callback: CallbackQuery, state: FSMContext):
+    """
+    Возвращает пользователя из просмотра событий обратно в меню управления артистом.
+    """
+    # Удаляем сообщения со списком событий, чтобы не засорять чат
+    await state.update_data(last_shown_event_ids=None)
+    await show_single_favorite_menu(callback, state)
 
 @router.callback_query(F.data == "back_to_favorites_list")
 async def cq_back_to_favorites_list(callback: CallbackQuery, state: FSMContext):
     """Возврат из меню артиста в общий список."""
     await show_favorites_list(callback, state)
 
-@router.callback_query(FavoritesFSM.viewing_artist, F.data.startswith("delete_favorite:"))
+@router.callback_query(
+    or_f(FavoritesFSM.viewing_artist, FavoritesFSM.viewing_artist_events), 
+    F.data.startswith("delete_favorite:")
+)
 async def cq_delete_favorite_artist(callback: CallbackQuery, state: FSMContext):
     """Удаляет артиста и возвращает в обновленный общий список."""
+    # --- НОВОЕ: Очищаем данные сессии просмотра событий, если они были ---
+    await state.update_data(last_shown_event_ids=None, messages_to_delete_on_expire=None)
+    # --- КОНЕЦ НОВОГО ---
+    
     data = await state.get_data()
     artist_id = data.get("current_artist_id")
     await db.remove_artist_from_favorites(user_id=callback.from_user.id, artist_id=artist_id)
@@ -189,9 +213,16 @@ async def cq_toggle_mobility_region_from_fav(callback: CallbackQuery, state: FSM
     )
     await callback.answer()
 
-@router.callback_query(FavoritesFSM.viewing_artist, F.data.startswith("edit_fav_regions:"))
+@router.callback_query(
+    or_f(FavoritesFSM.viewing_artist, FavoritesFSM.viewing_artist_events), 
+    F.data.startswith("edit_fav_regions:")
+)
 async def cq_edit_favorite_regions_start(callback: CallbackQuery, state: FSMContext):
     """Начинает флоу редактирования регионов для одного избранного."""
+    # --- НОВОЕ: Очищаем данные сессии просмотра событий, если они были ---
+    await state.update_data(last_shown_event_ids=None, messages_to_delete_on_expire=None)
+    # --- КОНЕЦ НОВОГО ---
+    
     user_lang = callback.from_user.language_code
     lexicon = Lexicon(user_lang)
     artist_id = int(callback.data.split(":")[1])

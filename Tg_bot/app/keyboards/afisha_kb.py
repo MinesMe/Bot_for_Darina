@@ -5,7 +5,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from dateutil.relativedelta import relativedelta
 from app.lexicon import EVENT_TYPE_EMOJI
 
-def get_afisha_actions_keyboard(lexicon) -> InlineKeyboardMarkup:
+def get_afisha_actions_keyboard(lexicon, show_back_button: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура с действиями после показа списка событий (из Афиши или после добавления в избранное).
     """
@@ -14,6 +14,15 @@ def get_afisha_actions_keyboard(lexicon) -> InlineKeyboardMarkup:
         text=lexicon.get('afisha_add_to_subs_button'), 
         callback_data="add_events_to_subs"
     )
+    # --- НОВОЕ: Условное добавление кнопки "Назад" ---
+    if show_back_button:
+        builder.row(
+            InlineKeyboardButton(
+                text=lexicon.get('back_to_favorites_menu_button'), # "⬅️ Назад в меню 'Избранное'" - этот текст подходит
+                callback_data="back_to_single_favorite_view"
+            )
+        )
+    # --- КОНЕЦ НОВОГО ---
     return builder.as_markup()
 
 def get_date_period_keyboard(lexicon) -> InlineKeyboardMarkup:
