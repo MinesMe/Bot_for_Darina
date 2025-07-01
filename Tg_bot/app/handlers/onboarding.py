@@ -161,6 +161,10 @@ async def process_city_search(message: Message, state: FSMContext):
     or_f(Onboarding.choosing_home_city, Onboarding.waiting_for_city_search), 
     F.data == "back_to_city_selection"
 )
+@router.callback_query(
+    or_f(Onboarding.choosing_home_city, Onboarding.waiting_for_city_search), 
+    F.data == "back_to_city_selection"
+)
 async def cq_back_to_city_selection(callback: CallbackQuery, state: FSMContext):
 # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     """Возвращает пользователя к списку городов по умолчанию в онбординге."""

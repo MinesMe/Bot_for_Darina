@@ -259,10 +259,16 @@ async def cq_temp_country_selected(callback: CallbackQuery, state: FSMContext):
     )
 
 # --- НОВЫЙ ХЭНДЛЕР: Возврат к выбору страны ---
-@router.callback_query(AfishaFlowFSM.temp_choosing_city, F.data == "back_to_temp_country_choice")
+@router.callback_query(
+    or_f(AfishaFlowFSM.temp_choosing_city, AfishaFlowFSM.temp_waiting_city_input), 
+    F.data == "back_to_temp_country_choice"
+)
 async def cq_back_to_temp_country_choice(callback: CallbackQuery, state: FSMContext):
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
     """Возвращает пользователя с экрана выбора города на экран выбора страны."""
-    # Просто вызываем хэндлер, который отрисовывает выбор страны
+    # --- ИЗМЕНЕНИЕ: Устанавливаем правильное состояние ПЕРЕД вызовом ---
+    await state.set_state(AfishaFlowFSM.temp_choosing_country)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     await afisha_by_temporary_prefs_start(callback, state)
 
 # --- ХЭНДЛЕРЫ ДЛЯ ВРЕМЕННОЙ НАСТРОЙКИ ---

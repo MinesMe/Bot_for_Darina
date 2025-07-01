@@ -26,7 +26,7 @@ async def start_city_search(callback: CallbackQuery, state: FSMContext, new_stat
     await callback.answer()
 
 
-async def process_city_input(message: Message, state: FSMContext, country_key: str, return_state: State, found_cities_kb: callable):
+async def process_city_input(message: Message, state: FSMContext, country_key: str, return_state: State, found_cities_kb: callable, back_callback):
     """
     Общая функция для обработки введенного города.
     """
