@@ -37,12 +37,16 @@ def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
 
 
 
-def get_home_city_selection_keyboard(top_cities: list, lexicon) -> InlineKeyboardMarkup: 
+def get_home_city_selection_keyboard(top_cities: list, lexicon, back_callback_data: str = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for city in top_cities:
         builder.button(text=city, callback_data=f"select_home_city:{city}")
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text=lexicon.get('find_another_city'), callback_data="search_for_home_city"))
+    # --- НОВОЕ: Добавляем кнопку "Назад", если передан callback ---
+    if back_callback_data:
+        builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data=back_callback_data))
+    # -----------------------------------------------------------
     return builder.as_markup()
 
 
@@ -89,9 +93,11 @@ def get_event_type_selection_keyboard(lexicon, selected_types: list = None) -> I
     return builder.as_markup()
 
 
-def get_back_to_city_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
+def get_back_to_city_selection_keyboard(lexicon, back_callback_data: str = "back_to_city_selection") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text=lexicon.get('back_button'), callback_data="back_to_city_selection")
+    # --- ИЗМЕНЕНИЕ: Используем переданный callback ---
+    builder.button(text=lexicon.get('back_button'), callback_data=back_callback_data)
+    # --------------------------------------------------
     return builder.as_markup()
 
 # --- НОВЫЕ И ПЕРЕРАБОТАННЫЕ КЛАВИАТУРЫ ДЛЯ ПОДПИСОК ---

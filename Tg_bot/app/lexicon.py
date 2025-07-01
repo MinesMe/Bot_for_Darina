@@ -241,6 +241,7 @@ class Lexicon:
                 'favorite_events_in_other_regions': '🌍 Также найдены в других регионах:',
                 'favorite_edit_regions_button':  "🌍 Изменить регионы для артиста",
                 'session_expired_alert': 'Эта сессия просмотра событий устарела. Пожалуйста, найдите события заново.',
+                'afisha_temp_select_country_prompt': "Отлично! Сначала выберите страну для поиска:",
 
                 
             },
@@ -430,6 +431,7 @@ class Lexicon:
                 'favorite_edit_regions_button': "🌍 Edit regions for this artist", # Исправил текст для логичности
                 'profile_button_favorites': "⭐ My Favorites",
                 'session_expired_alert': 'This event viewing session has expired. Please find the events again.',
+                'afisha_temp_select_country_prompt': "Great! First, select a country to search in:",
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

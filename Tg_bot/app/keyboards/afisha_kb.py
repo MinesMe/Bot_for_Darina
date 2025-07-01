@@ -61,5 +61,16 @@ def get_filter_type_choice_keyboard(lexicon) -> InlineKeyboardMarkup:
     builder.button(text=lexicon.get('afisha_filter_by_my_prefs_button'), callback_data="filter_type:my_prefs")
     builder.button(text=lexicon.get('afisha_filter_by_temporary_button'), callback_data="filter_type:temporary")
     builder.adjust(1)
+    # --- ИЗМЕНЕНИЕ: callback кнопки "Назад" теперь ведет на предыдущий шаг ---
     builder.row(InlineKeyboardButton(text=lexicon.get('back_to_date_choice_button'), callback_data="back_to_date_choice"))
+    return builder.as_markup()
+
+def get_temp_country_selection_keyboard(lexicon) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора страны во временном поиске Афиши."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Беларусь", callback_data="temp_select_country:Беларусь")
+    builder.button(text="Россия", callback_data="temp_select_country:Россия")
+    builder.adjust(2)
+    # Кнопка "Назад" ведет к выбору типа фильтра
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data="back_to_filter_type_choice"))
     return builder.as_markup()

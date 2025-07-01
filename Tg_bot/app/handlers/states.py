@@ -7,6 +7,7 @@ class AfishaFlowFSM(StatesGroup):
     choosing_date_period = State()
     choosing_month = State()
     choosing_filter_type = State()
+    temp_choosing_country = State() 
     temp_choosing_city = State()
     temp_waiting_city_input = State()
     temp_choosing_event_types = State()

@@ -113,7 +113,15 @@ async def menu_add_subscriptions(message: Message, state: FSMContext):
     """
     Точка входа в флоу ДОБАВЛЕНИЯ подписки.
     """
+    current_data = await state.get_data()
+    data_to_keep = {
+        'messages_to_delete_on_expire': current_data.get('messages_to_delete_on_expire'),
+        'last_shown_event_ids': current_data.get('last_shown_event_ids')
+    }
     await state.clear()
+    data_to_restore = {k: v for k, v in data_to_keep.items() if v is not None}
+    if data_to_restore:
+        await state.update_data(data_to_restore)
     user_id = message.from_user.id
     onboarding_done = await db.check_general_geo_onboarding_status(user_id)
     user_lang = message.from_user.language_code

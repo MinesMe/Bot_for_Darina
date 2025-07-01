@@ -126,15 +126,21 @@ async def cq_view_events_for_favorite(callback: CallbackQuery, state: FSMContext
     
     # 6. Отправляем сообщение
     header_text = lexicon.get('favorite_events_header').format(artist_name=hbold(artist_name))
-    await callback.message.answer(header_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    header_message = await callback.message.answer(header_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     
-    await send_long_message(
+    sent_messages_ids = await send_long_message(
         message=callback.message,
         text=response_text,
         lexicon=lexicon,
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
         reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+    )
+
+    # Правильно сохраняем
+    await state.update_data(
+        last_shown_event_ids=event_ids_to_subscribe,
+        messages_to_delete_on_expire=[header_message.message_id] + sent_messages_ids
     )
     
     await callback.answer()

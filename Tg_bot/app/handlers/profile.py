@@ -38,7 +38,15 @@ class EditMobilityFSM(StatesGroup):
 # --- Хелперы и главное меню профиля ---
 async def show_profile_menu(callback_or_message: Message | CallbackQuery, state: FSMContext):
     """Вспомогательная функция для показа главного меню профиля."""
+    current_data = await state.get_data()
+    data_to_keep = {
+        'messages_to_delete_on_expire': current_data.get('messages_to_delete_on_expire'),
+        'last_shown_event_ids': current_data.get('last_shown_event_ids')
+    }
     await state.clear()
+    data_to_restore = {k: v for k, v in data_to_keep.items() if v is not None}
+    if data_to_restore:
+        await state.update_data(data_to_restore)
     lexicon = Lexicon(callback_or_message.from_user.language_code)
     text = lexicon.get('profile_menu_header')
     markup = kb.get_profile_keyboard(lexicon)
@@ -257,7 +265,15 @@ async def cq_finish_general_edit_from_profile(callback: CallbackQuery, state: FS
 # --- Флоу управления ПОДПИСКАМИ ---
 async def show_subscriptions_list(callback_or_message: Message | CallbackQuery, state: FSMContext):
     """Показывает список подписок на события."""
-    await state.clear() 
+    current_data = await state.get_data()
+    data_to_keep = {
+        'messages_to_delete_on_expire': current_data.get('messages_to_delete_on_expire'),
+        'last_shown_event_ids': current_data.get('last_shown_event_ids')
+    }
+    await state.clear()
+    data_to_restore = {k: v for k, v in data_to_keep.items() if v is not None}
+    if data_to_restore:
+        await state.update_data(data_to_restore)
     user_id = callback_or_message.from_user.id
     lexicon = Lexicon(callback_or_message.from_user.language_code)
     

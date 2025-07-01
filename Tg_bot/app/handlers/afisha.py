@@ -38,16 +38,23 @@ router = Router()
 
 
 # --- Вспомогательная функция для отправки длинных сообщений ---
-async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwargs):
-    """Отправляет длинный текст, разбивая его на части, и крепит клавиатуру к последней."""
+async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwargs) -> list[int]:
+    """
+    Отправляет длинный текст, разбивая его на части, и крепит клавиатуру к последней.
+    ВОЗВРАЩАЕТ: Список ID всех отправленных сообщений.
+    """
+    sent_message_ids = []
     MESSAGE_LIMIT = 4096
+
     if not text.strip():
-        await message.answer(lexicon.get('afisha_nothing_found_for_query'), reply_markup=kwargs.get('reply_markup'))
-        return
+        msg = await message.answer(lexicon.get('afisha_nothing_found_for_query'), reply_markup=kwargs.get('reply_markup'))
+        sent_message_ids.append(msg.message_id)
+        return sent_message_ids
 
     if len(text) <= MESSAGE_LIMIT:
-        await message.answer(text, **kwargs)
-        return
+        msg = await message.answer(text, **kwargs)
+        sent_message_ids.append(msg.message_id)
+        return sent_message_ids
 
     text_parts = []
     current_part = ""
@@ -65,7 +72,9 @@ async def send_long_message(message: Message, text: str, lexicon: Lexicon, **kwa
             'disable_web_page_preview': kwargs.get('disable_web_page_preview')
         }
         msg = await message.answer(part, **final_kwargs)
-        print(msg.message_id)
+        sent_message_ids.append(msg.message_id)
+        
+    return sent_message_ids # <-- ВАЖНО: Убедитесь, что эта строка есть
 
 async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -83,7 +92,6 @@ async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AfishaFlowFSM.choosing_filter_type)
     lexicon = Lexicon(callback.from_user.language_code)
     
-    # Теперь этот код будет работать, так как date_from - это снова объект datetime
     await callback.message.edit_text(
         lexicon.get('afisha_choose_filter_type_prompt').format(
             date_from=date_from.strftime('%d.%m.%Y'),
@@ -96,7 +104,15 @@ async def show_filter_type_choice(callback: CallbackQuery, state: FSMContext):
 # --- НОВАЯ ТОЧКА ВХОДА В АФИШУ ---
 @router.message(F.text.in_(['🗓 Афиша', '🗓 Events', '🗓 Афіша']))
 async def menu_afisha_start(message: Message, state: FSMContext):
+    current_data = await state.get_data()
+    data_to_keep = {
+        'messages_to_delete_on_expire': current_data.get('messages_to_delete_on_expire'),
+        'last_shown_event_ids': current_data.get('last_shown_event_ids')
+    }
     await state.clear()
+    data_to_restore = {k: v for k, v in data_to_keep.items() if v is not None}
+    if data_to_restore:
+        await state.update_data(data_to_restore)
     await state.set_state(AfishaFlowFSM.choosing_date_period)
     lexicon = Lexicon(message.from_user.language_code)
     await message.answer(
@@ -195,35 +211,72 @@ async def afisha_by_my_prefs(callback: CallbackQuery, state: FSMContext):
     response_text, event_ids = await format_events_with_headers(events_by_category)
     
     header_text = lexicon.get('afisha_results_by_prefs_header').format(city_name=hbold(city_name))
-    await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
+    header_message = await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
     
     if not event_ids:
         await callback.message.answer(lexicon.get('afisha_no_results_for_prefs_period'))
         await state.clear()
         return
 
-    await state.update_data(last_shown_event_ids=event_ids)
-    await send_long_message(
+    sent_messages_ids = await send_long_message(
         callback.message, response_text, lexicon,
         parse_mode=ParseMode.HTML, disable_web_page_preview=True,
         reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+    )
+    await state.update_data(
+        last_shown_event_ids=event_ids,
+        messages_to_delete_on_expire=[header_message.message_id] + sent_messages_ids
     )
 
 @router.callback_query(AfishaFlowFSM.choosing_filter_type, F.data == "filter_type:temporary")
 async def afisha_by_temporary_prefs_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AfishaFlowFSM.temp_choosing_city)
+    await state.set_state(AfishaFlowFSM.temp_choosing_country)
     lexicon = Lexicon(callback.from_user.language_code)
-    user_prefs = await db.get_user_preferences(callback.from_user.id)
-    country_name = user_prefs.get('home_country') if user_prefs else lexicon.get('default_country_for_temp_search')
-    
-    await state.update_data(temp_country=country_name)
-    top_cities = await db.get_top_cities_for_country(country_name)
-    text = lexicon.get('afisha_temp_select_city_prompt').format(country_name=hbold(country_name))
+
+    # 2. Показываем текст и клавиатуру для выбора СТРАНЫ
+    text = lexicon.get('afisha_temp_select_country_prompt')
     await callback.message.edit_text(
         text,
-        reply_markup=kb.get_home_city_selection_keyboard(top_cities, lexicon),
+        reply_markup=kb.get_temp_country_selection_keyboard(lexicon),
         parse_mode=ParseMode.HTML
     )
+
+@router.callback_query(AfishaFlowFSM.temp_choosing_country, F.data == "back_to_filter_type_choice")
+async def cq_back_to_filter_type_choice(callback: CallbackQuery, state: FSMContext):
+    """Возвращает пользователя с экрана выбора страны на экран выбора типа фильтра."""
+    await show_filter_type_choice(callback, state)
+
+
+# --- НОВЫЙ ХЭНДЛЕР: Обработка выбора страны ---
+@router.callback_query(AfishaFlowFSM.temp_choosing_country, F.data.startswith("temp_select_country:"))
+async def cq_temp_country_selected(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор страны и предлагает выбрать город."""
+    country_name = callback.data.split(":")[1]
+    await state.update_data(temp_country=country_name)
+    await state.set_state(AfishaFlowFSM.temp_choosing_city)
+    
+    lexicon = Lexicon(callback.from_user.language_code)
+    top_cities = await db.get_top_cities_for_country(country_name)
+    text = lexicon.get('afisha_temp_select_city_prompt').format(country_name=hbold(country_name))
+    
+    # --- ИЗМЕНЕНИЕ: Используем универсальную клавиатуру с правильной кнопкой "Назад" ---
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb.get_home_city_selection_keyboard(
+            top_cities, 
+            lexicon, 
+            back_callback_data="back_to_temp_country_choice"
+        ),
+        parse_mode=ParseMode.HTML
+    )
+
+# --- НОВЫЙ ХЭНДЛЕР: Возврат к выбору страны ---
+@router.callback_query(AfishaFlowFSM.temp_choosing_city, F.data == "back_to_temp_country_choice")
+async def cq_back_to_temp_country_choice(callback: CallbackQuery, state: FSMContext):
+    """Возвращает пользователя с экрана выбора города на экран выбора страны."""
+    # Просто вызываем хэндлер, который отрисовывает выбор страны
+    await afisha_by_temporary_prefs_start(callback, state)
 
 # --- ХЭНДЛЕРЫ ДЛЯ ВРЕМЕННОЙ НАСТРОЙКИ ---
 
@@ -268,7 +321,9 @@ async def cq_afisha_back_to_city_list(callback: CallbackQuery, state: FSMContext
         state=state,
         country_key="temp_country",
         city_prompt_key='afisha_temp_select_city_prompt',
-        city_selection_kb=kb.get_home_city_selection_keyboard
+        city_selection_kb=lambda cities, lex: kb.get_home_city_selection_keyboard(
+            cities, lex, back_callback_data="back_to_temp_country_choice"
+        )
     )
 
 
@@ -348,7 +403,7 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
     
     header_text = lexicon.get('afisha_results_for_city_header').format(city_name=hbold(city_name))
     try:
-        await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
+        header_message = await callback.message.edit_text(header_text, parse_mode=ParseMode.HTML)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e): pass
         else: raise 
@@ -358,11 +413,16 @@ async def temp_finish_and_display(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    await state.update_data(last_shown_event_ids=event_ids)
-    await send_long_message(
+    sent_messages_ids = await send_long_message(
         callback.message, response_text, lexicon,
         parse_mode=ParseMode.HTML, disable_web_page_preview=True,
         reply_markup=kb.get_afisha_actions_keyboard(lexicon)
+    )
+
+    # Правильно сохраняем
+    await state.update_data(
+        last_shown_event_ids=event_ids,
+        messages_to_delete_on_expire=[header_message.message_id] + sent_messages_ids
     )
 
 # --- ПОИСК (остается без изменений, но можно будет добавить и ему выбор даты) ---
@@ -422,6 +482,29 @@ async def cq_add_to_subs_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddToSubsFSM.waiting_for_event_numbers)
     await callback.message.answer(lexicon.get('subs_enter_numbers_prompt'))
     await callback.answer()
+
+@router.callback_query(F.data == "add_events_to_subs")
+async def cq_add_to_subs_expired_session(callback: CallbackQuery, state: FSMContext):
+    """
+    Этот хэндлер ловит все нажатия на кнопку "Добавить в подписки",
+    когда бот НЕ находится в ожидаемом состоянии (сессия устарела).
+    """
+    lexicon = Lexicon(callback.from_user.language_code)
+    await callback.answer(lexicon.get('session_expired_alert'), show_alert=True)
+    
+    data = await state.get_data()
+    message_ids_to_delete = data.get("messages_to_delete_on_expire", [])
+    print(message_ids_to_delete)
+    
+    if callback.message:
+        message_ids_to_delete.append(callback.message.message_id)
+
+    for msg_id in set(message_ids_to_delete):
+        try:
+            await callback.bot.delete_message(chat_id=callback.from_user.id, message_id=msg_id)
+        except TelegramBadRequest:
+            pass
+
 
 @router.message(AddToSubsFSM.waiting_for_event_numbers, F.text)
 async def process_event_numbers(message: Message, state: FSMContext):
