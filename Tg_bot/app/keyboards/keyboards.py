@@ -14,7 +14,7 @@ from app.lexicon import (
 
 # --- КОНСТАНТЫ ---
 
-
+TOP_COUNTRIES = ["Беларусь", "Россия", "Казахстан", "Грузия", "Узбекистан", "Сербия", "Таиланд", "ОАЭ"]
 
 # --- ОСНОВНЫЕ КЛАВИАТУРЫ ---
 def get_main_menu_keyboard(lexicon) -> ReplyKeyboardMarkup:
@@ -116,26 +116,47 @@ def get_back_to_city_selection_keyboard(lexicon, back_callback_data: str = "back
 
 
 def get_region_selection_keyboard(
-    all_countries: list, 
-    selected_regions: list, 
+    selected_regions: list,
     finish_callback: str,
     back_callback: str,
-    lexicon  # <--- Просто добавляем этот параметр
+    search_callback: str, # <-- Новый параметр для поиска
+    lexicon
 ) -> InlineKeyboardMarkup:
     """
-    Универсальная клавиатура для выбора стран.
-    Принимает finish_callback для кнопки 'Готово' и back_callback для кнопки 'Назад'.
+    Универсальная клавиатура для выбора стран с топом, поиском и выбранными регионами.
     """
     builder = InlineKeyboardBuilder()
-    for country in all_countries:
+
+    # Собираем уникальный список стран для отображения: топ + уже выбранные
+    countries_to_show = sorted(list(set(TOP_COUNTRIES + selected_regions)))
+
+    for country in countries_to_show:
         text = f"✅ {country}" if country in selected_regions else f"⬜️ {country}"
         builder.button(text=text, callback_data=f"toggle_region:{country}")
+    
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data=finish_callback))  
-    
-    # ИЗМЕНЕНИЕ: Добавляем кнопку "Назад" с переданным callback_, вы правы. Прошу прощения, я усложнил иdata
+
+    # Добавляем кнопки управления
+    builder.row(InlineKeyboardButton(text=lexicon.get('find_another_country'), callback_data=search_callback))
+    builder.row(InlineKeyboardButton(text=lexicon.get('finish_button'), callback_data=finish_callback))
     builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data=back_callback))
-    
+
+    return builder.as_markup()
+
+def get_found_countries_keyboard(found_countries: list, lexicon, back_callback: str) -> InlineKeyboardMarkup:
+    """Клавиатура для показа найденных стран."""
+    builder = InlineKeyboardBuilder()
+    for country in found_countries:
+        # Используем тот же callback, что и на основном экране
+        builder.button(text=country, callback_data=f"toggle_region:{country}")
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text=lexicon.get('back_button'), callback_data=back_callback))
+    return builder.as_markup()
+
+def get_back_to_country_selection_keyboard(lexicon, back_callback: str) -> InlineKeyboardMarkup:
+    """Клавиатура с одной кнопкой "Назад" для экрана поиска."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=lexicon.get('back_button'), callback_data=back_callback)
     return builder.as_markup()
 
 

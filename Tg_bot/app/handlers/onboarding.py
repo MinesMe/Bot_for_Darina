@@ -45,16 +45,18 @@ async def finish_onboarding(callback_or_message: Message | CallbackQuery, state:
     await state.clear()
 
     if isinstance(callback_or_message, CallbackQuery):
-        await callback_or_message.message.edit_text(lexicon.get('setup_complete'))
+        await callback_or_message.message.edit_text(lexicon.get('first_greeting').format(first_name=hbold(callback_or_message.from_user.first_name)), parse_mode=ParseMode.HTML)
+            
         await callback_or_message.message.answer(
-            lexicon.get('main_menu_greeting').format(first_name=hbold(callback_or_message.from_user.first_name)),
-            reply_markup=kb.get_main_menu_keyboard(lexicon),
-            parse_mode=ParseMode.HTML
+            lexicon.get('setup_complete'),
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb.get_main_menu_keyboard(lexicon)
         )
     else:
         await callback_or_message.answer(
             lexicon.get('setup_complete'),
-            reply_markup=kb.get_main_menu_keyboard(lexicon)
+            reply_markup=kb.get_main_menu_keyboard(lexicon),
+            parse_mode=ParseMode.HTML
         )
 
 

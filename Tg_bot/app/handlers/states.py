@@ -8,7 +8,9 @@ class AfishaFlowFSM(StatesGroup):
     choosing_month = State()
     choosing_filter_type = State()
     temp_choosing_country = State() 
+    temp_waiting_country_input = State()
     temp_choosing_city = State()
+    
     temp_waiting_city_input = State()
     temp_choosing_event_types = State()
 
@@ -21,8 +23,10 @@ class SubscriptionFlow(StatesGroup):
     selecting_general_regions = State()
     waiting_for_action = State()
     waiting_for_artist_name = State()
+    adding_more_artists = State()
     choosing_mobility_type = State()
     selecting_custom_regions = State()
+    waiting_country_input = State()
 
 class CombinedFlow(StatesGroup):
     active = State()
@@ -35,4 +39,5 @@ class FavoritesFSM(StatesGroup):
     viewing_list = State()
     viewing_artist = State()
     editing_mobility = State()
+    waiting_country_input = State()
     viewing_artist_events = State()

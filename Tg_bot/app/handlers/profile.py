@@ -17,6 +17,7 @@ from ..lexicon import get_event_type_keys, get_event_type_storage_value
 from app.handlers.favorities import show_favorites_list
 from .search_cities import start_city_search, process_city_input, back_to_city_list
 from aiogram.filters import Command, or_f # Добавляем or_f
+from .search_countries import start_country_search, process_country_input as process_country_search
 
 router = Router()
 
@@ -34,6 +35,7 @@ class ProfileFSM(StatesGroup):
 
 class EditMobilityFSM(StatesGroup):
     selecting_regions = State()
+    waiting_country_input = State()
 
 
 # --- Хелперы и главное меню профиля ---
@@ -235,24 +237,45 @@ async def cq_edit_general_mobility(callback: CallbackQuery, state: FSMContext):
     """Начинает флоу редактирования общей мобильности, используя СВОЮ FSM."""
     # Устанавливаем состояние из НАШЕЙ новой FSM
     await state.set_state(EditMobilityFSM.selecting_regions)
-    user_lang = callback.message.from_user.language_code
+    user_lang = callback.from_user.language_code
     lexicon = Lexicon(user_lang)
     
     current_regions = await db.get_general_mobility(callback.from_user.id) or []
-    await state.update_data(selected_regions=current_regions) # Сохраняем текущий выбор
-    all_countries = await db.get_countries()
+    await state.update_data(selected_regions=current_regions)
     
     await callback.message.edit_text(
         lexicon.get('edit_mobility_prompt'),
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, 
-            current_regions, 
+            selected_regions=current_regions,
             finish_callback="finish_mobility_edit",
-            back_callback="back_to_profile" ,
+            back_callback="back_to_profile",
+            search_callback="search_for_mobility_country", # <-- Новый callback
             lexicon=lexicon
         )
     )
     await callback.answer()
+
+
+@router.callback_query(EditMobilityFSM.selecting_regions, F.data == "search_for_mobility_country")
+async def cq_search_for_mobility_country(callback: CallbackQuery, state: FSMContext):
+    """Запускает поиск страны для общей мобильности."""
+    await start_country_search(
+        callback,
+        state,
+        new_state=EditMobilityFSM.waiting_country_input,
+        back_callback="back_to_general_mobility_selection" # Callback для возврата
+    )
+
+@router.message(EditMobilityFSM.waiting_country_input, F.text)
+async def process_mobility_country_search(message: Message, state: FSMContext):
+    """Обрабатывает ввод страны для общей мобильности."""
+    await process_country_search(
+        message=message,
+        state=state,
+        return_state=EditMobilityFSM.selecting_regions,
+        back_callback="back_to_general_mobility_selection"
+    )
+
 
 @router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "finish_general_edit_from_profile")
 async def cq_finish_general_edit_from_profile(callback: CallbackQuery, state: FSMContext):
@@ -410,13 +433,14 @@ async def cq_delete_subscription(callback: CallbackQuery, state: FSMContext):
 
 
 
-@router.callback_query(EditMobilityFSM.selecting_regions, F.data.startswith("toggle_region:"))
+@router.callback_query(
+    or_f(EditMobilityFSM.selecting_regions, EditMobilityFSM.waiting_country_input),
+    F.data.startswith("toggle_region:")
+)
 async def cq_toggle_mobility_region(callback: CallbackQuery, state: FSMContext):
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
-    user_lang = callback.message.from_user.language_code
-    lexicon = Lexicon(user_lang)
     
     if region_name in selected:
         selected.remove(region_name)
@@ -424,16 +448,32 @@ async def cq_toggle_mobility_region(callback: CallbackQuery, state: FSMContext):
         selected.append(region_name)
         
     await state.update_data(selected_regions=selected)
-    all_countries = await db.get_countries()
-    
-    # Перерисовываем клавиатуру с тем же уникальным callback
-    await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(
-            all_countries, selected, finish_callback="finish_mobility_edit", back_callback="back_to_profile",
-            lexicon=lexicon
+
+    # Если мы пришли из поиска, нужно вернуться на главный экран выбора
+    current_state = await state.get_state()
+    if current_state == EditMobilityFSM.waiting_country_input:
+        # Устанавливаем правильное состояние и перерисовываем главный экран
+        await cq_edit_general_mobility(callback, state)
+    else:
+        # Если мы на главном экране, просто обновляем клавиатуру
+        user_lang = callback.from_user.language_code
+        lexicon = Lexicon(user_lang)
+        await callback.message.edit_reply_markup(
+            reply_markup=kb.get_region_selection_keyboard(
+                selected_regions=selected,
+                finish_callback="finish_mobility_edit",
+                back_callback="back_to_profile",
+                search_callback="search_for_mobility_country",
+                lexicon=lexicon
+            )
         )
-    )
     await callback.answer()
+
+@router.callback_query(EditMobilityFSM.waiting_country_input, F.data == "back_to_general_mobility_selection")
+async def cq_back_to_general_mobility_selection(callback: CallbackQuery, state: FSMContext):
+    """Возврат из поиска страны к основному экрану выбора общей мобильности."""
+    await cq_edit_general_mobility(callback, state)
+
 
 @router.callback_query(EditMobilityFSM.selecting_regions, F.data == "finish_mobility_edit")
 async def cq_finish_mobility_edit(callback: CallbackQuery, state: FSMContext):

@@ -268,6 +268,18 @@ async def find_artists_fuzzy(query: str, limit: int = 5) -> tuple[list[Artist], 
         
         return final_matches, is_exact_match
 
+async def find_countries_fuzzy(query: str, limit: int = 5) -> list[str]:
+    """Нечеткий поиск стран по названию."""
+    async with async_session() as session:
+        result = await session.execute(select(Country.name))
+        all_countries = result.scalars().all()
+        if not all_countries:
+            return []
+        
+        found = fuzzy_process.extract(query, all_countries, limit=limit)
+        best_matches = [country[0] for country in found if country[1] >= SIMILARITY_THRESHOLD]
+        return best_matches
+
 async def get_countries(home_country_selection: bool = False):
     if home_country_selection:
         return ["Беларусь", "Россия"]

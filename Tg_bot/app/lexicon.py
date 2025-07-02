@@ -61,11 +61,29 @@ class Lexicon:
             self.EVENT_TYPES = EVENT_TYPES_EN
             self.MONTH_NAMES = EN_MONTH_NAMES
 
+
+
     def _get_lexicon(self):
         lexicons = {
             'ru': {
                 'welcome': "👋 Привет, {first_name}!\n\nЯ твой гид в мире событий. Я помогу тебе найти интересные концерты, спектакли и многое другое.\n\nДавай настроимся. Сначала выбери свою страну проживания:",
-                'setup_complete': "🎉 Настройка завершена! Теперь ты можешь пользоваться всеми функциями бота.",
+                'setup_complete': """Отлично! 🙌
+
+Спасибо, что поделился(ась) своими предпочтениями! Теперь я готов(а) помогать тебе находить именно то, что тебе по душе.
+
+Что дальше?
+
+Используй <b>"Афиша"</b>, чтобы искать ивенты по предпочтениям или запросу и добавлять их в <b>"Мои подписки"</b>.
+
+В <b>"Мои подписки"</b> ты можешь посмотреть отслеживаемые ивенты.
+
+Для отслеживания своих любимых артистов добавляй их в <b>"Избранные"</b> через <i>"Найти/Добавить артиста"</i>.
+<b>"Избранные"</b> ты можешь найти в разделе <i>"Профиль"</i>.
+
+Ты всегда можешь изменить свои предпочтения в разделе <i>"Настройки"</i>.
+
+Приятного поиска! ✨""",
+                'first_greeting': 'Приветствую {first_name}! ',
                 'main_menu_greeting': "С возвращением, {first_name}!",
                 'main_menu_button_afisha': "🗓 Афиша",
                 'main_menu_button_subs': "⭐ Мои подписки",
@@ -242,6 +260,11 @@ class Lexicon:
                 'favorite_edit_regions_button':  "🌍 Изменить регионы для артиста",
                 'session_expired_alert': 'Эта сессия просмотра событий устарела. Пожалуйста, найдите события заново.',
                 'afisha_temp_select_country_prompt': "Отлично! Сначала выберите страну для поиска:",
+                'search_country_prompt': 'Введите название страны для поиска 🔎',
+                'country_not_found': '🤔 Страна не найдена. Попробуйте ввести название по-другому или вернитесь назад.',
+                'country_found_prompt': 'Вот что мне удалось найти. Выберите подходящий вариант:',
+                'find_another_country': '🌍 Найти другую страну',
+                'country_not_selected_alert': 'Пожалуйста, выберите страну',
 
                 
             },
@@ -255,7 +278,23 @@ class Lexicon:
             },
             'en': {
                 'welcome': "👋 Hi, {first_name}!\n\nI'm your guide to the world of events. I'll help you find interesting concerts, plays, and much more.\n\nLet's get set up. First, choose your country of residence:",
-                'setup_complete': "🎉 Setup complete! You can now use all the bot's features.",
+                'setup_complete': """Great! 🙌
+
+Thank you for sharing your preferences! Now I'm ready to help you find exactly what you like.
+
+What's next?
+
+Use <code>/afisha</code> to search for events by preference or query and add them to <b>"My Subscriptions"</b>.
+
+You can view the monitored events in <b>"My Subscriptions"</b>.
+
+To track your favorite artists, add them to your <b>"Favorites"</b> via <i>"Find/Add an artist"</i>.
+You can find <b>"Favorites"</b> in the <i>"Profile"</i> section.
+
+You can always change your preferences in the <i>"Settings"</i> section.
+
+Enjoy your search! ✨""",
+                'first_greeting': 'Hi {first_name}! ',
                 'main_menu_greeting': "Welcome back, {first_name}!",
                 'main_menu_button_afisha': "🗓 Events",
                 'main_menu_button_subs': "⭐ My Subs",
@@ -432,6 +471,11 @@ class Lexicon:
                 'profile_button_favorites': "⭐ My Favorites",
                 'session_expired_alert': 'This event viewing session has expired. Please find the events again.',
                 'afisha_temp_select_country_prompt': "Great! First, select a country to search in:",
+                'search_country_prompt': 'Enter a country name to search 🔎',
+                'country_not_found': '🤔 Country not found. Please try a different name or go back.',
+                'country_found_prompt': 'Here\'s what I found. Please select an option:',
+                'find_another_country': '🌍 Find another country',
+                'country_not_selected_alert': 'Please select a country',
             }
         }
         # --- ВАЖНОЕ ИСПРАВЛЕНИЕ ---

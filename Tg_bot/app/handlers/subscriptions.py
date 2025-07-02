@@ -25,6 +25,8 @@ from aiogram.fsm.storage.base import BaseStorage, StorageKey
 # ... (остальные ваши импорты)
 from app.services.recommendation import get_recommended_artists
 from app.handlers.states import SubscriptionFlow,RecommendationFlow,CombinedFlow
+from .search_countries import start_country_search, process_country_input as process_country_search
+from aiogram.filters import or_f
 
 
 
@@ -216,27 +218,61 @@ async def handle_general_onboarding_choice(callback: CallbackQuery, state: FSMCo
 
     if callback.data == 'setup_general_mobility':
         await state.set_state(SubscriptionFlow.selecting_general_regions)
-        await state.update_data(selected_regions=[])
-        all_countries = await db.get_countries()
+        await state.update_data(selected_regions=[], source_flow="onboarding")
         
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Кнопка "Назад" будет просто отменять весь процесс добавления
         await callback.message.edit_text(
             lexicon.get('general_mobility_selection_prompt'),
             reply_markup=kb.get_region_selection_keyboard(
-                all_countries, [], 
+                selected_regions=[],
                 finish_callback="finish_general_selection",
-                back_callback="cancel_add_to_fav" ,
+                back_callback="cancel_add_to_fav", # Отмена онбординга = выход
+                search_callback="search_for_sub_country", 
                 lexicon=lexicon
             )
         )
     else: # skip_general_mobility
-        await state.set_state(SubscriptionFlow.waiting_for_action)
+        await state.set_state(SubscriptionFlow.waiting_for_artist_name)
         await state.update_data(pending_favorites=[])
+        general_mobility_regions = await db.get_general_mobility(callback.from_user.id)
+        show_setup_button = not bool(general_mobility_regions)
         await callback.message.edit_text(
-            lexicon.get('general_mobility_skipped_prompt'),
-            reply_markup=kb.get_add_sub_action_keyboard(lexicon)
+            lexicon.get('enter_artist_name_prompt'), 
+            reply_markup=kb.get_artist_input_keyboard(lexicon, show_setup_mobility_button=show_setup_button)
         )
+
+@router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "search_for_general_mobility_country")
+async def cq_search_for_general_mobility_country(callback: CallbackQuery, state: FSMContext):
+    """Запускает поиск страны для общей мобильности в флоу онбординга."""
+    await start_country_search(
+        callback,
+        state,
+        new_state=SubscriptionFlow.waiting_country_input, # Используем то же состояние, что и в других флоу
+        back_callback="back_to_general_selection"
+    )
+
+@router.callback_query(SubscriptionFlow.waiting_country_input, F.data == "back_to_general_selection")
+async def cq_back_to_general_selection(callback: CallbackQuery, state: FSMContext):
+    """Возвращает из поиска страны к онбордингу общей мобильности."""
+    # Просто пере-вызываем хендлер, который показывает главный экран выбора
+    await state.set_state(SubscriptionFlow.selecting_general_regions)
+    data = await state.get_data()
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
+    selected_regions = data.get("selected_regions", [])
+    
+    # Определяем кнопку "Назад" в зависимости от того, откуда пришли
+    back_cb = "cancel_add_to_fav" if data.get("source_flow") == "onboarding" else "back_to_artist_input"
+
+    await callback.message.edit_text(
+        lexicon.get('general_mobility_selection_prompt'),
+        reply_markup=kb.get_region_selection_keyboard(
+            selected_regions=selected_regions,
+            finish_callback="finish_general_selection",
+            back_callback=back_cb,
+            search_callback="search_for_sub_country",
+            lexicon=lexicon
+        )
+    )
 
 @router.callback_query(F.data == "cancel_add_to_fav")
 async def cq_cancel_add_process(callback: CallbackQuery, state: FSMContext):
@@ -255,62 +291,61 @@ async def cq_cancel_add_process(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer(lexicon.get('cancel_alert'))
 
-@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "setup_general_mobility")
+@router.callback_query(SubscriptionFlow.waiting_for_artist_name, F.data == "setup_general_mobility")
 async def handle_setup_general_mobility_again(callback: CallbackQuery, state: FSMContext):
     """
     Этот хэндлер срабатывает, когда пользователь нажимает 'Настроить общую мобильность'
-    уже после прохождения первого онбординга.
+    на экране ввода имени артиста.
     """
+    await state.set_state(SubscriptionFlow.selecting_general_regions)
+    await state.update_data(source_flow="setup_again") # Помечаем, откуда пришли
+    
     user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
-    await state.set_state(SubscriptionFlow.selecting_general_regions)
-    await state.update_data(selected_regions=[])
-    all_countries = await db.get_countries()
+    
+    current_regions = await db.get_general_mobility(callback.from_user.id) or []
+    await state.update_data(selected_regions=current_regions)
+    
     await callback.message.edit_text(
         lexicon.get('general_mobility_selection_prompt'),
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, [], finish_callback="finish_general_selection", back_callback="cancel_add_to_fav",
+            selected_regions=current_regions, 
+            finish_callback="finish_general_selection", 
+            back_callback="back_to_artist_input", 
+            search_callback="search_for_sub_country",
             lexicon=lexicon
         )
     )
     await callback.answer()
 
-@router.callback_query(SubscriptionFlow.selecting_general_regions, F.data.startswith("toggle_region:"))
-async def cq_toggle_region_for_general(callback: CallbackQuery, state: FSMContext):
-    region_name = callback.data.split(":")[1]
-    data = await state.get_data()
-    selected = data.get("selected_regions", [])
+@router.callback_query(SubscriptionFlow.selecting_general_regions, F.data == "back_to_artist_input")
+async def cq_back_to_artist_input(callback: CallbackQuery, state: FSMContext):
+    """Возвращает из настройки общей мобильности к экрану ввода имени артиста."""
+    await state.set_state(SubscriptionFlow.waiting_for_artist_name)
     user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
-    if region_name in selected:
-        selected.remove(region_name)
-    else:
-        selected.append(region_name)
-    await state.update_data(selected_regions=selected)
-    all_countries = await db.get_countries()
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, finish_callback="finish_general_selection",  back_callback="cancel_add_to_fav",
-            lexicon=lexicon )
+    
+    # Проверяем, нужно ли показывать кнопку настройки мобильности снова
+    general_mobility_regions = await db.get_general_mobility(callback.from_user.id)
+    show_setup_button = not bool(general_mobility_regions)
+
+    await callback.message.edit_text(
+        lexicon.get('enter_artist_name_prompt'),
+        reply_markup=kb.get_artist_input_keyboard(lexicon, show_setup_mobility_button=show_setup_button)
     )
 
-@router.callback_query(SubscriptionFlow.waiting_for_action, F.data == "finish_adding_subscriptions")
+@router.callback_query(SubscriptionFlow.adding_more_artists, F.data == "finish_adding_subscriptions")
 async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext):
-    """
-    Завершает сессию, сохраняет все в ИЗБРАННОЕ и показывает найденные события.
-    """
+    """Сохраняет всех из очереди в БД и запускает поиск событий/рекомендаций."""
     data = await state.get_data()
     pending_items = data.get('pending_favorites', [])
     user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
-
     if not pending_items:
         await callback.answer(lexicon.get('nothing_to_add_alert'), show_alert=True)
         return
-
-    # 1. Сохраняем артистов в БД (этот блок без изменений)
-    added_artist_names = []
-    added_artist_ids = []
+    
+    added_artist_names, added_artist_ids = [], []
     async with db.async_session() as session:
         for item_data in pending_items:
             artist_name = item_data['item_name']
@@ -328,23 +363,16 @@ async def finish_adding_subscriptions(callback: CallbackQuery, state: FSMContext
         await state.clear()
         return
 
-    # 2. Устанавливаем НОВОЕ гибридное состояние
     await state.set_state(CombinedFlow.active)
-    # --- ИЗМЕНЕНИЕ: Очищаем state полностью, так как ID будут добавляться в других функциях ---
-    await state.set_data({}) 
-    logging.warning("--- DEBUG: УСТАНОВЛЕНО СОСТОЯНИЕ CombinedFlow.active ---")
-    logging.warning(f"--- DEBUG: ДАННЫЕ В STATE: {await state.get_data()} ---")
-
-    # 3. Редактируем сообщение, чтобы пользователь видел результат
+    await state.set_data({})
+    
     initial_feedback_text = lexicon.get('favorites_added_final').format(count=len(added_artist_names))
     await callback.message.edit_text(initial_feedback_text)
     
-    # 4. Запускаем две задачи, которые наполнят наш state данными
     await asyncio.gather(
         show_events_for_new_favorites(callback, state, added_artist_ids, added_artist_names),
         trigger_recommendation_flow(callback.from_user.id, callback.bot, state, added_artist_names)
     )
-    
     await callback.answer()
 
 
@@ -379,6 +407,14 @@ async def process_artist_search(message: Message, state: FSMContext):
             reply_markup=kb.found_artists_keyboard(found_artists, lexicon)
         )
 
+@router.message(SubscriptionFlow.adding_more_artists, F.text)
+async def process_artist_search_from_add_more_screen(message: Message, state: FSMContext):
+    """
+    Если пользователь вводит текст на экране 'Добавить еще / Готово',
+    это должно расцениваться как поиск нового артиста.
+    """
+    # Просто передаем управление основному хендлеру поиска артиста
+    await process_artist_search(message, state)
 
 @router.callback_query(F.data.startswith("subscribe_to_artist:"))
 async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
@@ -393,20 +429,14 @@ async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
         await callback.answer(lexicon.get('artist_not_found_error'), show_alert=True)
         return
 
-    # Сохраняем имя и ID в state на всякий случай
     await state.update_data(current_artist_id=artist.artist_id, current_artist=artist.name)
     
-    # --- НОВАЯ ЛОГИКА ---
     general_mobility = await db.get_general_mobility(callback.from_user.id)
     
     if general_mobility:
-        # СЛУЧАЙ 1: У пользователя есть общая мобильность.
-        # Сразу добавляем артиста в очередь с этими настройками.
-        
+        # ... (этот блок без изменений)
         data = await state.get_data()
         pending_subs = data.get('pending_favorites', [])
-        
-        # Проверяем, чтобы не добавить дубликат в очередь
         if not any(sub['item_name'] == artist.name for sub in pending_subs):
             pending_subs.append({
                 "item_name": artist.name, 
@@ -417,29 +447,25 @@ async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
             await callback.answer(lexicon.get('artist_added_with_general_settings_alert').format(artist_name=artist.name), show_alert=True)
         else:
             await callback.answer(lexicon.get('artist_already_in_queue_alert').format(artist_name=artist.name), show_alert=True)
-
-        # Показываем меню "Добавить еще / Готово"
         await show_add_more_or_finish(callback.message, state, lexicon)
-
     else:
-        # СЛУЧАЙ 2: У пользователя НЕТ общей мобильности.
-        # Показываем ему экран настройки регионов для этого артиста (старая логика).
-        
+        # --- ИЗМЕНИТЬ ЭТОТ БЛОК ---
         await state.set_state(SubscriptionFlow.selecting_custom_regions)
-        await state.update_data(selected_regions=[])
-        all_countries = await db.get_countries()
+        selected_regions = []
+        await state.update_data(selected_regions=selected_regions)
         
         await callback.message.edit_text(
             lexicon.get('artist_set_tracking_countries_prompt').format(artist_name=hbold(artist.name)),
             reply_markup=kb.get_region_selection_keyboard(
-                all_countries, [], 
+                selected_regions=selected_regions,
                 finish_callback="finish_custom_selection",
                 back_callback="cancel_artist_search",
+                search_callback="search_for_sub_country", # <-- Новый callback
                 lexicon=lexicon
             ),
             parse_mode="HTML"
         )
-        await callback.answer()
+    await callback.answer()
 
 # @router.callback_query(SubscriptionFlow.choosing_mobility_type, F.data.in_(['use_general_mobility', 'setup_custom_mobility']))
 # async def handle_mobility_type_choice(callback: CallbackQuery, state: FSMContext):
@@ -465,25 +491,94 @@ async def cq_subscribe_to_artist(callback: CallbackQuery, state: FSMContext):
 #             parse_mode="HTML"
 #         )
 
-@router.callback_query(SubscriptionFlow.selecting_custom_regions, F.data.startswith("toggle_region:"))
-async def cq_toggle_region_for_custom(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(SubscriptionFlow.waiting_country_input, F.data == "back_to_custom_regions_selection")
+async def cq_back_to_custom_regions_selection(callback: CallbackQuery, state: FSMContext):
+    """Возврат из поиска к выбору кастомных регионов."""
+    await state.set_state(SubscriptionFlow.selecting_custom_regions)
+    data = await state.get_data()
+    selected = data.get("selected_regions", [])
+    artist_name = data.get('current_artist', '...')
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
+    await callback.message.edit_text(
+        lexicon.get('artist_set_tracking_countries_prompt').format(artist_name=hbold(artist_name)),
+        reply_markup=kb.get_region_selection_keyboard(
+            selected_regions=selected,
+            finish_callback="finish_custom_selection",
+            back_callback="cancel_artist_search",
+            search_callback="search_for_sub_country",
+            lexicon=lexicon
+        ),
+        parse_mode="HTML"
+    )
+
+@router.callback_query(
+    or_f(SubscriptionFlow.selecting_general_regions, SubscriptionFlow.selecting_custom_regions), 
+    F.data == "search_for_sub_country"
+)
+async def cq_search_for_sub_country(callback: CallbackQuery, state: FSMContext):
+    """Запускает поиск страны в флоу подписок."""
+    current_state = await state.get_state()
+    # Определяем, куда возвращаться
+    if current_state == SubscriptionFlow.selecting_general_regions:
+        back_cb = "back_to_general_selection"
+    else: # selecting_custom_regions
+        back_cb = "back_to_custom_regions_selection"
+
+    await start_country_search(
+        callback,
+        state,
+        new_state=SubscriptionFlow.waiting_country_input,
+        back_callback=back_cb
+    )
+
+@router.message(SubscriptionFlow.waiting_country_input, F.text)
+async def process_sub_country_search(message: Message, state: FSMContext):
+    """Обрабатывает ввод страны в флоу подписок."""
+    data = await state.get_data()
+    # Определяем, в какое состояние вернуться
+    if data.get("source_flow") or await state.get_state() == SubscriptionFlow.selecting_general_regions:
+         return_state = SubscriptionFlow.selecting_general_regions
+         back_cb = "back_to_general_selection"
+    else:
+         return_state = SubscriptionFlow.selecting_custom_regions
+         back_cb = "back_to_custom_regions_selection"
+
+    await process_country_search(
+        message=message,
+        state=state,
+        return_state=return_state,
+        back_callback=back_cb
+    )
+
+@router.callback_query(
+    or_f(SubscriptionFlow.selecting_general_regions, SubscriptionFlow.selecting_custom_regions, SubscriptionFlow.waiting_country_input),
+    F.data.startswith("toggle_region:")
+)
+async def cq_toggle_region(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор/снятие региона (универсальный хендлер)."""
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
-    user_lang = callback.message.from_user.language_code
-    user_lang = await db.get_user_lang(callback.from_user.id)
-    lexicon = Lexicon(user_lang)
+    
     if region_name in selected:
         selected.remove(region_name)
     else:
         selected.append(region_name)
     await state.update_data(selected_regions=selected)
-    all_countries = await db.get_countries()
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    await callback.message.edit_reply_markup(
-        reply_markup=kb.get_region_selection_keyboard(all_countries, selected, finish_callback="finish_custom_selection", back_callback=f"subscribe_to_artist:{data.get('current_artist')}",
-            lexicon=lexicon)
-    )
+
+    # Определяем, какой экран перерисовывать
+    current_state = await state.get_state()
+    # Если мы в поиске или в настройке общей мобильности
+    if current_state == SubscriptionFlow.waiting_country_input or data.get("source_flow"):
+        await cq_back_to_general_selection(callback, state)
+    else: # Значит, мы в кастомной настройке
+        await cq_back_to_custom_regions_selection(callback, state)
+        
+    await callback.answer()
+
+
+
 
 @router.callback_query(SubscriptionFlow.selecting_custom_regions, F.data == "finish_custom_selection")
 async def cq_finish_custom_selection(callback: CallbackQuery, state: FSMContext):
@@ -509,6 +604,7 @@ async def show_add_more_or_finish(message: Message, state: FSMContext, lexicon: 
     """
     Показывает очередь и предлагает написать имя следующего артиста или нажать "Готово".
     """
+    await state.set_state(SubscriptionFlow.adding_more_artists) # <-- Устанавливаем новое, уникальное состояние
     data = await state.get_data()
     pending_subs = data.get('pending_favorites', [])
     
@@ -517,13 +613,9 @@ async def show_add_more_or_finish(message: Message, state: FSMContext, lexicon: 
         text += lexicon.get('queue_for_adding_header')
         for sub in pending_subs:
             text += f"▫️ {hbold(sub['item_name'])}\n"
+    text += "\n" + lexicon.get('add_more_prompt')
     
-    text += lexicon.get('add_more_prompt')
-    
-    # --- ИЗМЕНЕНИЕ: Устанавливаем состояние ожидания ДЕЙСТВИЯ ---
-    await state.set_state(SubscriptionFlow.waiting_for_action)
-    
-    # Отправляем сообщение с одной кнопкой "Готово"
+    # Клавиатура остается прежней, она генерирует правильный callback_data
     await message.edit_text(
         text, 
         reply_markup=kb.get_add_more_or_finish_keyboard(lexicon), 
@@ -538,18 +630,15 @@ async def cq_finish_general_selection(callback: CallbackQuery, state: FSMContext
     user_lang = await db.get_user_lang(callback.from_user.id)
     lexicon = Lexicon(user_lang)
 
-    # if not regions: # Можно раскомментировать, если нужно
-    #     await callback.answer("Нужно выбрать хотя бы один регион!", show_alert=True)
-    #     return
-
     await db.set_general_mobility(callback.from_user.id, regions)
     await callback.answer(lexicon.get('mobility_saved_alert'), show_alert=True)
     
-    # Возвращаемся к выбору действия
-    await state.set_state(SubscriptionFlow.waiting_for_action)
+    # Возвращаемся к вводу имени артиста
+    await state.set_state(SubscriptionFlow.waiting_for_artist_name)
+    await state.update_data(source_flow=None) # Чистим флаг
     await callback.message.edit_text(
-        lexicon.get('general_mobility_saved_prompt_action'),
-        reply_markup=kb.get_add_sub_action_keyboard(lexicon)
+        lexicon.get('enter_artist_name_prompt'),
+        reply_markup=kb.get_artist_input_keyboard(lexicon, show_setup_mobility_button=not bool(regions))
     )
 
 
@@ -595,7 +684,8 @@ async def cq_toggle_recommended_artist(callback: CallbackQuery, state: FSMContex
     # Сохраняем обратно в state как список, чтобы избежать ошибок JSON
     await state.update_data(current_selection_ids=list(selected_ids))
 
-    lexicon = Lexicon(callback.from_user.language_code)
+    user_lang = await db.get_user_lang(callback.from_user.id)
+    lexicon = Lexicon(user_lang)
     
     try:
         # Перерисовываем клавиатуру

@@ -5,6 +5,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from dateutil.relativedelta import relativedelta
 from app.lexicon import EVENT_TYPE_EMOJI
 
+
 def get_favorites_list_keyboard(favorites: list, lexicon, show_back_button: bool = False) -> InlineKeyboardMarkup:
     """
     Генерирует клавиатуру со списком избранных артистов.

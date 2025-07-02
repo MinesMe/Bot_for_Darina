@@ -17,6 +17,7 @@ from ..lexicon import Lexicon
 from ..database.models import Artist
 from app.utils.utils import format_events_by_artist_with_region_split
 from app.handlers.states import FavoritesFSM, AddToSubsFSM
+from .search_countries import start_country_search, process_country_input as process_country_search
 
 router = Router()
 
@@ -98,7 +99,7 @@ async def cq_view_favorite_artist(callback: CallbackQuery, state: FSMContext, bo
     """Переход из общего списка в меню конкретного артиста."""
     artist_id = int(callback.data.split(":")[1])
     await state.update_data(current_artist_id=artist_id)
-    # Вызываем обновленный хелпер
+    # Этот вызов уже правильный
     await show_single_favorite_menu(
         chat_id=callback.message.chat.id,
         message_id=callback.message.message_id,
@@ -205,7 +206,6 @@ async def cq_back_to_single_favorite_from_events(callback: CallbackQuery, state:
     """
     Возвращает пользователя из просмотра/добавления событий обратно в меню управления артистом.
     """
-    # ... (логика удаления временных сообщений) ...
     data = await state.get_data()
     prompt_message_id = data.get('prompt_message_id')
     if prompt_message_id:
@@ -216,7 +216,7 @@ async def cq_back_to_single_favorite_from_events(callback: CallbackQuery, state:
 
     await state.update_data(last_shown_event_ids=None, prompt_message_id=None, callback_query_id_for_alert=None)
     
-    # Вызываем обновленный хелпер
+    # --- ИСПРАВЛЕННЫЙ ВЫЗОВ ---
     await show_single_favorite_menu(
         chat_id=callback.message.chat.id,
         message_id=callback.message.message_id,
@@ -246,17 +246,18 @@ async def cq_delete_favorite_artist(callback: CallbackQuery, state: FSMContext):
     
     lexicon = Lexicon(callback.from_user.language_code)
     await callback.answer(lexicon.get('favorites_removed_alert'), show_alert=True)
-    await show_favorites_list(callback, state)
+    await show_favorites_list(callback, state, True)
 
 
-@router.callback_query(FavoritesFSM.editing_mobility, F.data.startswith("toggle_region:"))
+@router.callback_query(
+    or_f(FavoritesFSM.editing_mobility, FavoritesFSM.waiting_country_input),
+    F.data.startswith("toggle_region:")
+)
 async def cq_toggle_mobility_region_from_fav(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора/снятия региона."""
     region_name = callback.data.split(":")[1]
     data = await state.get_data()
     selected = data.get("selected_regions", [])
-    user_lang = callback.from_user.language_code
-    lexicon = Lexicon(user_lang)
     
     if region_name in selected:
         selected.remove(region_name)
@@ -264,17 +265,62 @@ async def cq_toggle_mobility_region_from_fav(callback: CallbackQuery, state: FSM
         selected.append(region_name)
         
     await state.update_data(selected_regions=selected)
-    all_countries = await db.get_countries()
-    
-    await callback.message.edit_reply_markup(
+
+    current_state = await state.get_state()
+    if current_state == FavoritesFSM.waiting_country_input:
+        # Пересобираем сообщение с главного экрана
+        await state.set_state(FavoritesFSM.editing_mobility)
+        user_lang = callback.from_user.language_code
+        lexicon = Lexicon(user_lang)
+        artist_name = data.get("artist_name", "...")
+        await callback.message.edit_text(
+            lexicon.get('favorite_edit_regions_prompt').format(artist_name=hbold(artist_name)),
+            reply_markup=kb.get_region_selection_keyboard(
+                selected_regions=selected,
+                finish_callback="finish_fav_regions_edit",
+                back_callback="back_to_single_favorite_view",
+                search_callback="search_for_fav_country",
+                lexicon=lexicon
+            ),
+            parse_mode="HTML"
+        )
+    else:
+        # Просто обновляем клавиатуру
+        user_lang = callback.from_user.language_code
+        lexicon = Lexicon(user_lang)
+        await callback.message.edit_reply_markup(
+            reply_markup=kb.get_region_selection_keyboard(
+                selected_regions=selected,
+                finish_callback="finish_fav_regions_edit",
+                back_callback="back_to_single_favorite_view",
+                search_callback="search_for_fav_country",
+                lexicon=lexicon
+            )
+        )
+    await callback.answer()
+
+@router.callback_query(FavoritesFSM.waiting_country_input, F.data == "back_to_fav_regions_selection")
+async def cq_back_to_fav_regions_selection(callback: CallbackQuery, state: FSMContext):
+    """Возврат из поиска страны к выбору регионов для избранного."""
+    # Мы не можем просто вызвать cq_edit_favorite_regions_start, так как он ждет artist_id в callback.data.
+    # Поэтому мы эмулируем его логику.
+    await state.set_state(FavoritesFSM.editing_mobility)
+    user_lang = callback.from_user.language_code
+    lexicon = Lexicon(user_lang)
+    data = await state.get_data()
+    current_regions = data.get("selected_regions", [])
+    artist_name = data.get("artist_name", "...")
+    await callback.message.edit_text(
+        lexicon.get('favorite_edit_regions_prompt').format(artist_name=hbold(artist_name)),
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, selected,
+            selected_regions=current_regions,
             finish_callback="finish_fav_regions_edit",
             back_callback="back_to_single_favorite_view",
+            search_callback="search_for_fav_country",
             lexicon=lexicon
-        )
+        ),
+        parse_mode="HTML"
     )
-    await callback.answer()
 
 @router.callback_query(
     or_f(FavoritesFSM.viewing_artist, FavoritesFSM.viewing_artist_events), 
@@ -284,7 +330,6 @@ async def cq_edit_favorite_regions_start(callback: CallbackQuery, state: FSMCont
     """Начинает флоу редактирования регионов для одного избранного."""
     # --- НОВОЕ: Очищаем данные сессии просмотра событий, если они были ---
     await state.update_data(last_shown_event_ids=None, messages_to_delete_on_expire=None)
-    # --- КОНЕЦ НОВОГО ---
     
     user_lang = callback.from_user.language_code
     lexicon = Lexicon(user_lang)
@@ -295,7 +340,6 @@ async def cq_edit_favorite_regions_start(callback: CallbackQuery, state: FSMCont
     current_regions = favorite_details.regions if favorite_details else []
     
     await state.update_data(selected_regions=current_regions)
-    all_countries = await db.get_countries()
     
     data = await state.get_data()
     artist_name = data.get("artist_name", "...")
@@ -303,26 +347,45 @@ async def cq_edit_favorite_regions_start(callback: CallbackQuery, state: FSMCont
     await callback.message.edit_text(
         lexicon.get('favorite_edit_regions_prompt').format(artist_name=hbold(artist_name)),
         reply_markup=kb.get_region_selection_keyboard(
-            all_countries, 
-            current_regions,
+            selected_regions=current_regions,
             finish_callback="finish_fav_regions_edit",
             back_callback="back_to_single_favorite_view",
+            search_callback="search_for_fav_country", # <-- Новый callback
             lexicon=lexicon
         ),
         parse_mode="HTML"
     )
     await callback.answer()
 
+@router.callback_query(FavoritesFSM.editing_mobility, F.data == "search_for_fav_country")
+async def cq_search_for_fav_country(callback: CallbackQuery, state: FSMContext):
+    """Запускает поиск страны для избранного."""
+    await start_country_search(
+        callback,
+        state,
+        new_state=FavoritesFSM.waiting_country_input,
+        back_callback="back_to_fav_regions_selection"
+    )
+
+@router.message(FavoritesFSM.waiting_country_input, F.text)
+async def process_fav_country_search(message: Message, state: FSMContext):
+    """Обрабатывает ввод страны для избранного."""
+    await process_country_search(
+        message=message,
+        state=state,
+        return_state=FavoritesFSM.editing_mobility,
+        back_callback="back_to_fav_regions_selection"
+    )
+
 @router.callback_query(FavoritesFSM.editing_mobility, F.data == "finish_fav_regions_edit")
-async def cq_finish_fav_regions_edit(callback: CallbackQuery, state: FSMContext):
+async def cq_finish_fav_regions_edit(callback: CallbackQuery, state: FSMContext, bot: Bot): # bot уже был, это хорошо
     """Сохраняет новые регионы для избранного и возвращает в меню артиста."""
     data = await state.get_data()
     regions = data.get("selected_regions", [])
     artist_id = data.get("current_artist_id")
-    lexicon = Lexicon(callback.from_user.language_code) # --- ИЗМЕНЕНИЕ --- Lexicon определен в начале
+    lexicon = Lexicon(callback.from_user.language_code)
     
     if not regions:
-        # --- ИЗМЕНЕНИЕ --- Текст заменен на вызов существующего ключа lexicon.get()
         await callback.answer(lexicon.get('no_regions_selected_alert'), show_alert=True)
         return
 
@@ -330,10 +393,17 @@ async def cq_finish_fav_regions_edit(callback: CallbackQuery, state: FSMContext)
     
     await callback.answer(lexicon.get('favorite_regions_updated_alert'), show_alert=True)
     
-    await show_single_favorite_menu(callback, state)
+    # --- ИСПРАВЛЕННЫЙ ВЫЗОВ ---
+    await show_single_favorite_menu(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        user_id=callback.from_user.id,
+        bot=bot,
+        state=state
+    )
 
 @router.callback_query(FavoritesFSM.editing_mobility, F.data == "finish_mobility_edit_from_fav")
-async def cq_finish_mobility_edit_from_fav(callback: CallbackQuery, state: FSMContext):
+async def cq_finish_mobility_edit_from_fav(callback: CallbackQuery, state: FSMContext, bot: Bot): # bot уже был, отлично
     """Сохраняет настройки мобильности и возвращает в меню артиста."""
     data = await state.get_data()
     regions = data.get("selected_regions", [])
@@ -342,12 +412,19 @@ async def cq_finish_mobility_edit_from_fav(callback: CallbackQuery, state: FSMCo
     lexicon = Lexicon(callback.from_user.language_code)
     await callback.answer(lexicon.get('mobility_saved_alert'), show_alert=True)
     
-    await show_single_favorite_menu(callback, state)
+    # --- ИСПРАВЛЕННЫЙ ВЫЗОВ ---
+    await show_single_favorite_menu(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        user_id=callback.from_user.id,
+        bot=bot,
+        state=state
+    )
 
 @router.callback_query(FavoritesFSM.editing_mobility, F.data == "back_to_single_favorite_view")
-async def cq_back_to_single_favorite(callback: CallbackQuery, state: FSMContext):
+async def cq_back_to_single_favorite(callback: CallbackQuery, state: FSMContext, bot:Bot):
     """Возврат из редактирования мобильности в меню артиста."""
-    await show_single_favorite_menu(callback, state)
+    await show_single_favorite_menu(callback, state, bot)
 
 # Для нотифаера
 @router.callback_query(F.data.startswith("add_to_subs_from_notify:"))
